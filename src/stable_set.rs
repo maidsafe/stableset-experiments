@@ -40,4 +40,16 @@ impl StableSet {
             .map(|((idx, _), _)| *idx + 1)
             .unwrap_or(0)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Id> {
+        self.members.keys().map(|(_, id)| id)
+    }
+
+    pub fn iter_signed(&self) -> impl Iterator<Item = (&(u64, Id), &SectionSig<(u64, Id)>)> {
+        self.members.iter()
+    }
+
+    pub(crate) fn has_seen(&self, id: Id) -> bool {
+        self.dead.contains(&id) || self.members.keys().any(|(_, m)| *m == id)
+    }
 }

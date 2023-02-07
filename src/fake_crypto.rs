@@ -39,13 +39,19 @@ impl<T: Eq> SectionSig<T> {
 
     pub fn verify(&self, voters: &BTreeSet<Id>, msg: &T) -> bool {
         &self.voters == voters
-            && 3 * self.sigs.len() > 2 * self.voters.len()
+            && self.has_threshold()
             && self.sigs.iter().all(|(id, sig)| sig.verify(*id, msg))
     }
 
-    pub fn add_share(&mut self, id: Id, sig: Sig<T>) {
+    pub fn add_share(&mut self, id: Id, sig: Sig<T>) -> bool {
         if self.voters.contains(&id) {
             self.sigs.insert(id, sig);
         }
+
+        self.has_threshold()
+    }
+
+    fn has_threshold(&self) -> bool {
+        3 * self.sigs.len() > 2 * self.voters.len()
     }
 }
