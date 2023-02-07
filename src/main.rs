@@ -51,9 +51,7 @@ impl Actor for Node {
         stable_set.add(0, self.genesis, sig);
 
         if id != self.genesis {
-            for peer in self.peers.iter() {
-                o.send(*peer, Msg::ReqAppend(id));
-            }
+            o.broadcast(elders.iter(), &Msg::ReqAppend(id));
         }
 
         State {
