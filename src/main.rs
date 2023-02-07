@@ -12,40 +12,37 @@ use stateright::{
 #[derive(
     Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
-pub struct Sig {
+pub struct Sig<T> {
     // HACK: we'll just use the signer's Id and msg as the signature
     signer: Id,
-    msg: Box<Msg>,
+    msg: T,
 }
 
-impl Sig {
-    fn verify(&self, id: Id, msg: &Msg) -> bool {
-        &*self.msg == msg && self.signer == id
+impl<T: Eq> Sig<T> {
+    fn verify(&self, id: Id, msg: &T) -> bool {
+        &self.msg == msg && self.signer == id
     }
 
-    fn sign(signer: Id, msg: Msg) -> Self {
-        Self {
-            signer,
-            msg: Box::new(msg),
-        }
+    fn sign(signer: Id, msg: T) -> Self {
+        Self { signer, msg }
     }
 }
 
 #[derive(
     Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
-pub struct SectionSig {
+pub struct SectionSig<T> {
     voters: BTreeSet<Id>,
-    sigs: BTreeMap<Id, Sig>,
+    sigs: BTreeMap<Id, Sig<T>>,
 }
 
-impl SectionSig {
-    fn verify(&self, msg: &Msg) -> bool {
+impl<T: Eq> SectionSig<T> {
+    fn verify(&self, msg: &T) -> bool {
         3 * self.sigs.len() > 2 * self.voters.len()
             && self.sigs.iter().all(|(id, sig)| sig.verify(*id, msg))
     }
 
-    fn add_share(&mut self, id: Id, sig: Sig) {
+    fn add_share(&mut self, id: Id, sig: Sig<T>) {
         if self.voters.contains(&id) {
             self.sigs.insert(id, sig);
         }
@@ -57,26 +54,26 @@ impl SectionSig {
 )]
 pub enum Msg {
     ReqAppend(Id),
-    AppendShare(u64, Id, Sig),
-    Append(u64, Id),
-    Joined(u64, Id, SectionSig),
+    AppendShare(u64, Id, Sig<(u64, Id)>),
+    Joined(u64, Id, SectionSig<(u64, Id)>),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
 struct StableSet {
-    members: BTreeMap<(u64, Id), SectionSig>,
+    members: BTreeMap<(u64, Id), SectionSig<(u64, Id)>>,
     dead: BTreeSet<Id>,
 }
 
 impl StableSet {
-    fn add(&mut self, ordering_id: u64, id: Id, sig: SectionSig) {
-        if sig.verify(&Msg::Append(ordering_id, id)) {
+    fn add(&mut self, ordering_id: u64, id: Id, sig: SectionSig<(u64, Id)>) {
+        if sig.verify(&(ordering_id, id)) {
             self.members.insert((ordering_id, id), sig);
         }
     }
 
     fn remove(&mut self, id: Id) {
         self.dead.insert(id);
+
         let to_be_removed = Vec::from_iter(
             self.members
                 .keys()
@@ -105,7 +102,7 @@ impl StableSet {
 pub struct State {
     elders: BTreeSet<Id>,
     stable_set: StableSet,
-    joining_section_sig: BTreeMap<u64, SectionSig>,
+    joining_section_sig: BTreeMap<u64, SectionSig<(u64, Id)>>,
 }
 
 #[derive(Clone)]
@@ -124,10 +121,7 @@ impl Actor for Node {
 
         let sig = SectionSig {
             voters: elders.clone(),
-            sigs: BTreeMap::from_iter([(
-                self.genesis,
-                Sig::sign(self.genesis, Msg::Append(0, self.genesis)),
-            )]),
+            sigs: BTreeMap::from_iter([(self.genesis, Sig::sign(self.genesis, (0, self.genesis)))]),
         };
 
         stable_set.add(0, self.genesis, sig);
@@ -157,13 +151,13 @@ impl Actor for Node {
             Msg::ReqAppend(candidate_id) => {
                 if !state.stable_set.contains(candidate_id) {
                     let ord_idx = state.stable_set.next_idx();
-                    let sig = Sig::sign(id, Msg::Append(ord_idx, candidate_id));
+                    let sig = Sig::sign(id, (ord_idx, candidate_id));
                     o.send(src, Msg::AppendShare(ord_idx, candidate_id, sig));
                 }
             }
             Msg::AppendShare(ord_idx, candidate_id, sig) => {
                 let elders = state.elders.clone();
-                let join_msg = Msg::Append(ord_idx, candidate_id);
+                let join_msg = (ord_idx, candidate_id);
                 if id == candidate_id
                     && !state.stable_set.contains(id)
                     && sig.verify(src, &join_msg)
@@ -189,11 +183,10 @@ impl Actor for Node {
                 }
             }
             Msg::Joined(ord_idx, candidate_id, sig) => {
-                if sig.voters == state.elders && sig.verify(&Msg::Append(ord_idx, candidate_id)) {
+                if sig.voters == state.elders && sig.verify(&(ord_idx, candidate_id)) {
                     state.to_mut().stable_set.add(ord_idx, candidate_id, sig)
                 }
             }
-            Msg::Append(ordering_idx, member_id) => {} // Dummy message
         }
     }
 }
