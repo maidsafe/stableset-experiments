@@ -1,3 +1,5 @@
+mod fake_crypto;
+
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -9,45 +11,7 @@ use stateright::{
     Expectation, Model,
 };
 
-#[derive(
-    Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-pub struct Sig<T> {
-    // HACK: we'll just use the signer's Id and msg as the signature
-    signer: Id,
-    msg: T,
-}
-
-impl<T: Eq> Sig<T> {
-    fn verify(&self, id: Id, msg: &T) -> bool {
-        &self.msg == msg && self.signer == id
-    }
-
-    fn sign(signer: Id, msg: T) -> Self {
-        Self { signer, msg }
-    }
-}
-
-#[derive(
-    Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-pub struct SectionSig<T> {
-    voters: BTreeSet<Id>,
-    sigs: BTreeMap<Id, Sig<T>>,
-}
-
-impl<T: Eq> SectionSig<T> {
-    fn verify(&self, msg: &T) -> bool {
-        3 * self.sigs.len() > 2 * self.voters.len()
-            && self.sigs.iter().all(|(id, sig)| sig.verify(*id, msg))
-    }
-
-    fn add_share(&mut self, id: Id, sig: Sig<T>) {
-        if self.voters.contains(&id) {
-            self.sigs.insert(id, sig);
-        }
-    }
-}
+use fake_crypto::{SectionSig, Sig};
 
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -65,10 +29,8 @@ struct StableSet {
 }
 
 impl StableSet {
-    fn add(&mut self, ordering_id: u64, id: Id, sig: SectionSig<(u64, Id)>) {
-        if sig.verify(&(ordering_id, id)) {
-            self.members.insert((ordering_id, id), sig);
-        }
+    fn add(&mut self, ordering_id: u64, id: Id, section_sig: SectionSig<(u64, Id)>) {
+        self.members.insert((ordering_id, id), section_sig);
     }
 
     fn remove(&mut self, id: Id) {
@@ -119,10 +81,8 @@ impl Actor for Node {
         let elders = BTreeSet::from_iter([self.genesis]);
         let mut stable_set = StableSet::default();
 
-        let sig = SectionSig {
-            voters: elders.clone(),
-            sigs: BTreeMap::from_iter([(self.genesis, Sig::sign(self.genesis, (0, self.genesis)))]),
-        };
+        let mut sig = SectionSig::new(elders.clone());
+        sig.add_share(self.genesis, Sig::sign(self.genesis, (0, self.genesis)));
 
         stable_set.add(0, self.genesis, sig);
 
@@ -162,19 +122,15 @@ impl Actor for Node {
                     && !state.stable_set.contains(id)
                     && sig.verify(src, &join_msg)
                 {
-                    let joining_sig =
-                        state
-                            .to_mut()
-                            .joining_section_sig
-                            .entry(ord_idx)
-                            .or_insert(SectionSig {
-                                voters: elders,
-                                sigs: BTreeMap::new(),
-                            });
+                    let joining_sig = state
+                        .to_mut()
+                        .joining_section_sig
+                        .entry(ord_idx)
+                        .or_insert(SectionSig::new(elders.clone()));
 
                     joining_sig.add_share(src, sig);
 
-                    if joining_sig.verify(&join_msg) {
+                    if joining_sig.verify(&elders, &join_msg) {
                         o.broadcast(
                             &self.peers,
                             &Msg::Joined(ord_idx, candidate_id, joining_sig.clone()),
@@ -182,9 +138,12 @@ impl Actor for Node {
                     }
                 }
             }
-            Msg::Joined(ord_idx, candidate_id, sig) => {
-                if sig.voters == state.elders && sig.verify(&(ord_idx, candidate_id)) {
-                    state.to_mut().stable_set.add(ord_idx, candidate_id, sig)
+            Msg::Joined(ord_idx, candidate_id, section_sig) => {
+                if section_sig.verify(&state.elders, &(ord_idx, candidate_id)) {
+                    state
+                        .to_mut()
+                        .stable_set
+                        .add(ord_idx, candidate_id, section_sig)
                 }
             }
         }
