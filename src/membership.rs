@@ -27,7 +27,7 @@ pub struct State {
 
 #[derive(Clone)]
 pub struct Node {
-    pub genesis: Id,
+    pub genesis_nodes: BTreeSet<Id>,
     pub peers: Vec<Id>,
 }
 
@@ -36,15 +36,19 @@ impl Actor for Node {
     type State = State;
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
-        let elders = BTreeSet::from_iter([self.genesis]);
+        let elders = self.genesis_nodes.clone();
         let mut stable_set = StableSet::default();
 
-        let mut sig = SectionSig::new(elders.clone());
-        sig.add_share(self.genesis, Sig::sign(self.genesis, (0, self.genesis)));
+        for node in self.genesis_nodes.iter().copied() {
+            let mut sig = SectionSig::new(elders.clone());
+            for genesis_signer in self.genesis_nodes.iter().copied() {
+                sig.add_share(genesis_signer, Sig::sign(genesis_signer, (0, node)));
+            }
 
-        stable_set.add(0, self.genesis, sig);
+            stable_set.add(0, node, sig);
+        }
 
-        if id != self.genesis {
+        if !self.genesis_nodes.contains(&id) {
             o.broadcast(elders.iter(), &Msg::ReqJoin(id));
         }
 

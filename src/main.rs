@@ -2,6 +2,8 @@ mod fake_crypto;
 mod membership;
 mod stable_set;
 
+use std::collections::BTreeSet;
+
 use membership::{Msg, Node};
 use stateright::{
     actor::{model_peers, Actor, ActorModel, Id, Network},
@@ -10,6 +12,7 @@ use stateright::{
 
 #[derive(Clone)]
 struct ModelCfg {
+    elder_count: usize,
     server_count: usize,
     network: Network<<Node as Actor>::Msg>,
 }
@@ -18,7 +21,7 @@ impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
         ActorModel::new(self.clone(), vec![])
             .actors((0..self.server_count).map(|i| Node {
-                genesis: 0.into(),
+                genesis_nodes: BTreeSet::from_iter((0..self.elder_count).into_iter().map(Id::from)),
                 peers: model_peers(i, self.server_count),
             }))
             .init_network(self.network)
@@ -55,7 +58,8 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        server_count: 3,
+        elder_count: 2,
+        server_count: 5,
         network,
     }
     .into_model()
