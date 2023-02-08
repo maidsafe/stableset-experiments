@@ -1,20 +1,22 @@
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    iter::FromIterator,
 };
 
 use stateright::actor::{Actor, Id, Out};
 
-use crate::fake_crypto::{SectionSig, Sig};
 use crate::stable_set::StableSet;
+use crate::{
+    fake_crypto::{SectionSig, Sig},
+    stable_set::Member,
+};
 
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 pub enum Msg {
-    ReqJoin(Id),
-    JoinShare(u64, Id, Sig<(u64, Id)>),
+    ReqJoin(Id, Member),
+    JoinShare(u64, Id, Sig<(u64, Id)>, Member),
     Joined(u64, Id, SectionSig<(u64, Id)>),
 }
 
@@ -49,7 +51,8 @@ impl Actor for Node {
         }
 
         if !self.genesis_nodes.contains(&id) {
-            o.broadcast(elders.iter(), &Msg::ReqJoin(id));
+            let last_member = stable_set.last_member().unwrap();
+            o.broadcast(elders.iter(), &Msg::ReqJoin(id, last_member));
         }
 
         State {
@@ -68,20 +71,35 @@ impl Actor for Node {
         o: &mut Out<Self>,
     ) {
         match msg {
-            Msg::ReqJoin(candidate_id) => {
-                if !state.stable_set.contains(candidate_id) {
-                    let ord_idx = state.stable_set.next_idx();
+            Msg::ReqJoin(candidate_id, member) => {
+                if !state.stable_set.contains(candidate_id) && member.verify(&state.elders) {
+                    state.to_mut().stable_set.apply(member);
+                    let last_member = state.stable_set.last_member().unwrap();
+                    let ord_idx = last_member.ord_idx + 1;
                     let sig = Sig::sign(id, (ord_idx, candidate_id));
-                    o.send(src, Msg::JoinShare(ord_idx, candidate_id, sig));
+                    o.send(src, Msg::JoinShare(ord_idx, candidate_id, sig, last_member));
                 }
             }
-            Msg::JoinShare(ord_idx, candidate_id, sig) => {
+            Msg::JoinShare(ord_idx, candidate_id, sig, last_member) => {
                 let elders = state.elders.clone();
                 let join_msg = (ord_idx, candidate_id);
                 if id == candidate_id
                     && !state.stable_set.contains(id)
                     && sig.verify(src, &join_msg)
+                    && last_member.verify(&state.elders)
+                    && last_member.ord_idx + 1 == ord_idx
                 {
+                    let last_member_is_new = !state.stable_set.has_seen(last_member.id);
+                    state.to_mut().stable_set.apply(last_member);
+
+                    if (!state.joining_section_sig.is_empty()
+                        && !state.joining_section_sig.contains_key(&ord_idx))
+                        || last_member_is_new
+                    {
+                        let last_member = state.stable_set.last_member().unwrap();
+                        o.broadcast(elders.iter(), &Msg::ReqJoin(id, last_member));
+                    }
+
                     let section_sig = state
                         .to_mut()
                         .joining_section_sig

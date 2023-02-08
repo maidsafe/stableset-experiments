@@ -4,6 +4,21 @@ use stateright::actor::Id;
 
 use crate::fake_crypto::SectionSig;
 
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct Member {
+    pub ord_idx: u64,
+    pub id: Id,
+    pub sig: SectionSig<(u64, Id)>,
+}
+
+impl Member {
+    pub fn verify(&self, voters: &BTreeSet<Id>) -> bool {
+        self.sig.verify(voters, &(self.ord_idx, self.id))
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
 pub struct StableSet {
     members: BTreeMap<(u64, Id), SectionSig<(u64, Id)>>,
@@ -11,6 +26,10 @@ pub struct StableSet {
 }
 
 impl StableSet {
+    pub fn apply(&mut self, member: Member) {
+        self.add(member.ord_idx, member.id, member.sig);
+    }
+
     pub fn add(&mut self, ordering_id: u64, id: Id, section_sig: SectionSig<(u64, Id)>) {
         self.members.insert((ordering_id, id), section_sig);
     }
@@ -34,11 +53,14 @@ impl StableSet {
         !self.dead.contains(&id) && self.members.keys().any(|(_, m)| *m == id)
     }
 
-    pub fn next_idx(&self) -> u64 {
+    pub fn last_member(&self) -> Option<Member> {
         self.members
             .last_key_value()
-            .map(|((idx, _), _)| *idx + 1)
-            .unwrap_or(0)
+            .map(|((ord_idx, id), sig)| Member {
+                ord_idx: *ord_idx,
+                id: *id,
+                sig: sig.clone(),
+            })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Id> {
