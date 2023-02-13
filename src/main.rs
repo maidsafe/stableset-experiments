@@ -58,8 +58,8 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        elder_count: 2,
-        server_count: 4,
+        elder_count: 3,
+        server_count: 5,
         network,
     }
     .into_model()

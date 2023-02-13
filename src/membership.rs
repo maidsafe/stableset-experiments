@@ -17,7 +17,7 @@ use crate::{
 pub enum Msg {
     ReqJoin(Id, Member),
     JoinShare(u64, Id, Sig<(u64, Id)>, Member),
-    Joined(u64, Id, SectionSig<(u64, Id)>),
+    Sync(Vec<Member>),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -88,28 +88,33 @@ impl Membership {
                     section_sig.add_share(src, sig);
 
                     if section_sig.verify(elders, &join_msg) {
-                        o.broadcast(
-                            elders,
-                            &Msg::Joined(ord_idx, candidate_id, section_sig.clone()),
-                        )
+                        let member = Member {
+                            ord_idx,
+                            id: candidate_id,
+                            sig: section_sig.clone(),
+                        };
+                        self.stable_set.apply(member.clone());
+
+                        o.broadcast(self.stable_set.ids(), &Msg::Sync(vec![member]))
+                        // o.broadcast(elders, &Msg::Sync(vec![member]))
                     }
                 }
             }
-            Msg::Joined(ord_idx, candidate_id, section_sig) => {
-                if !self.stable_set.has_seen(candidate_id)
-                    && section_sig.verify(elders, &(ord_idx, candidate_id))
-                {
-                    self.stable_set
-                        .add(ord_idx, candidate_id, section_sig.clone());
-
-                    o.broadcast(
-                        self.stable_set.iter(),
-                        &Msg::Joined(ord_idx, candidate_id, section_sig),
-                    );
-
-                    for ((ord_idx, member), sig) in self.stable_set.iter_signed() {
-                        o.send(candidate_id, Msg::Joined(*ord_idx, *member, sig.clone()));
+            Msg::Sync(msgs) => {
+                let mut new_members = Vec::new();
+                for member in msgs {
+                    if !self.stable_set.has_seen(member.id) && member.verify(elders) {
+                        new_members.push(member.clone());
+                        self.stable_set.apply(member);
                     }
+                }
+
+                if !new_members.is_empty() {
+                    o.broadcast(
+                        new_members.iter().map(|m| &m.id),
+                        &Msg::Sync(Vec::from_iter(self.stable_set.members())),
+                    );
+                    // o.broadcast(self.stable_set.ids(), &Msg::Sync(new_members));
                 }
             }
         }

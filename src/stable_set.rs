@@ -4,9 +4,7 @@ use stateright::actor::Id;
 
 use crate::fake_crypto::SectionSig;
 
-#[derive(
-    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub ord_idx: u64,
     pub id: Id,
@@ -16,6 +14,12 @@ pub struct Member {
 impl Member {
     pub fn verify(&self, voters: &BTreeSet<Id>) -> bool {
         self.sig.verify(voters, &(self.ord_idx, self.id))
+    }
+}
+
+impl std::fmt::Debug for Member {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "M({}.{:?})", self.ord_idx, self.id)
     }
 }
 
@@ -63,12 +67,15 @@ impl StableSet {
             })
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Id> {
+    pub fn ids(&self) -> impl Iterator<Item = &Id> {
         self.members.keys().map(|(_, id)| id)
     }
 
-    pub fn iter_signed(&self) -> impl Iterator<Item = (&(u64, Id), &SectionSig<(u64, Id)>)> {
-        self.members.iter()
+    pub fn members(&self) -> impl Iterator<Item = Member> {
+        self.members
+            .clone()
+            .into_iter()
+            .map(|((ord_idx, id), sig)| Member { ord_idx, id, sig })
     }
 
     pub(crate) fn has_seen(&self, id: Id) -> bool {
