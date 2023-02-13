@@ -29,7 +29,7 @@ impl ModelCfg {
                 Expectation::Eventually,
                 "everyone joined and converged",
                 |_, state| {
-                    let reference_stable_set = state.actor_states[0].stable_set.clone();
+                    let reference_stable_set = state.actor_states[0].membership.stable_set.clone();
 
                     let all_nodes_joined = (0..state.actor_states.len())
                         .into_iter()
@@ -41,7 +41,7 @@ impl ModelCfg {
                     }
 
                     for state in state.actor_states.iter() {
-                        if reference_stable_set != state.stable_set {
+                        if reference_stable_set != state.membership.stable_set {
                             return false;
                         }
                     }
