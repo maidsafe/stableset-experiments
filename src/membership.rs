@@ -23,7 +23,7 @@ pub enum Msg {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Membership {
     pub stable_set: StableSet,
-    pub joining_section_sig: BTreeMap<u64, SectionSig<(u64, Id)>>,
+    pub joining_state: Option<(u64, SectionSig<(u64, Id)>)>,
 }
 
 impl Membership {
@@ -41,7 +41,7 @@ impl Membership {
 
         Self {
             stable_set,
-            joining_section_sig: Default::default(),
+            joining_state: None,
         }
     }
 
@@ -72,31 +72,43 @@ impl Membership {
                     let last_member_is_new = !self.stable_set.has_seen(last_member.id);
                     self.stable_set.apply(last_member);
 
-                    if (!self.joining_section_sig.is_empty()
-                        && !self.joining_section_sig.contains_key(&ord_idx))
-                        || last_member_is_new
+                    let joining_sig = if let Some((curr_ord_idx, sig)) = self.joining_state.as_mut()
                     {
-                        let last_member = self.stable_set.last_member().unwrap();
-                        o.broadcast(elders.iter(), &Msg::ReqJoin(id, last_member));
-                    }
+                        if *curr_ord_idx > ord_idx {
+                            let last_member = self.stable_set.last_member().unwrap();
+                            o.send(src, Msg::ReqJoin(id, last_member));
+                            return;
+                        } else if *curr_ord_idx < ord_idx {
+                            let last_member = self.stable_set.last_member().unwrap();
+                            o.broadcast(
+                                elders.iter().filter(|id| id != &&src),
+                                &Msg::ReqJoin(id, last_member),
+                            );
 
-                    let section_sig = self
-                        .joining_section_sig
-                        .entry(ord_idx)
-                        .or_insert(SectionSig::new(elders.clone()));
+                            self.joining_state = Some((ord_idx, SectionSig::new(elders.clone())));
+                            &mut self.joining_state.as_mut().unwrap().1
+                        } else {
+                            sig
+                        }
+                    } else {
+                        self.joining_state = Some((ord_idx, SectionSig::new(elders.clone())));
+                        &mut self.joining_state.as_mut().unwrap().1
+                    };
 
-                    section_sig.add_share(src, sig);
+                    joining_sig.add_share(src, sig);
 
-                    if section_sig.verify(elders, &join_msg) {
+                    if joining_sig.verify(elders, &join_msg) {
                         let member = Member {
                             ord_idx,
                             id: candidate_id,
-                            sig: section_sig.clone(),
+                            sig: joining_sig.clone(),
                         };
                         self.stable_set.apply(member.clone());
 
-                        o.broadcast(self.stable_set.ids(), &Msg::Sync(vec![member]))
-                        // o.broadcast(elders, &Msg::Sync(vec![member]))
+                        o.broadcast(
+                            self.stable_set.ids().filter(|i| i != &&id),
+                            &Msg::Sync(vec![member]),
+                        )
                     }
                 }
             }
