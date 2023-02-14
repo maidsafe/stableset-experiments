@@ -57,7 +57,10 @@ impl Membership {
                     let last_member = self.stable_set.last_member().unwrap();
                     let ord_idx = last_member.ord_idx + 1;
                     let sig = Sig::sign(id, (ord_idx, candidate_id));
-                    o.send(src, Msg::JoinShare(ord_idx, candidate_id, sig, last_member));
+                    o.send(
+                        src,
+                        Msg::JoinShare(ord_idx, candidate_id, sig, last_member).into(),
+                    );
                 }
             }
             Msg::JoinShare(ord_idx, candidate_id, sig, last_member) => {
@@ -76,14 +79,14 @@ impl Membership {
                             Ordering::Greater => {
                                 // we've moved on to larger indices
                                 let last_member = self.stable_set.last_member().unwrap();
-                                o.send(src, Msg::ReqJoin(id, last_member));
+                                o.send(src, Msg::ReqJoin(id, last_member).into());
                                 return;
                             }
                             Ordering::Less => {
                                 let last_member = self.stable_set.last_member().unwrap();
                                 o.broadcast(
                                     elders.iter().filter(|id| id != &&src),
-                                    &Msg::ReqJoin(id, last_member),
+                                    &Msg::ReqJoin(id, last_member).into(),
                                 );
 
                                 self.joining_state =
@@ -109,7 +112,7 @@ impl Membership {
 
                         o.broadcast(
                             self.stable_set.ids().filter(|i| i != &&id),
-                            &Msg::Sync(vec![member]),
+                            &Msg::Sync(vec![member]).into(),
                         )
                     }
                 }
@@ -126,7 +129,7 @@ impl Membership {
                 if !new_members.is_empty() {
                     o.broadcast(
                         new_members.iter().map(|m| &m.id),
-                        &Msg::Sync(Vec::from_iter(self.stable_set.members())),
+                        &Msg::Sync(Vec::from_iter(self.stable_set.members())).into(),
                     );
                     // o.broadcast(self.stable_set.ids(), &Msg::Sync(new_members));
                 }

@@ -1,10 +1,12 @@
 mod fake_crypto;
+mod handover;
 mod membership;
 mod stable_set;
 
 use std::{borrow::Cow, collections::BTreeSet};
 
-use membership::{Membership, Msg};
+use handover::Handover;
+use membership::Membership;
 use stateright::{
     actor::{model_peers, Actor, ActorModel, Id, Network, Out},
     Expectation, Model,
@@ -12,7 +14,7 @@ use stateright::{
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
-    pub elders: BTreeSet<Id>,
+    pub handover: Handover,
     pub membership: Membership,
 }
 
@@ -22,19 +24,40 @@ pub struct Node {
     pub peers: Vec<Id>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum Msg {
+    Membership(membership::Msg),
+    Handover(handover::Msg),
+}
+
+impl From<membership::Msg> for Msg {
+    fn from(msg: membership::Msg) -> Self {
+        Self::Membership(msg)
+    }
+}
+
+impl From<handover::Msg> for Msg {
+    fn from(msg: handover::Msg) -> Self {
+        Self::Handover(msg)
+    }
+}
+
 impl Actor for Node {
     type Msg = Msg;
     type State = State;
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
-        let elders = self.genesis_nodes.clone();
-        let membership = Membership::new(&elders);
+        let membership = Membership::new(&self.genesis_nodes);
+        let handover = Handover::new(self.genesis_nodes.clone());
 
         if !self.genesis_nodes.contains(&id) {
-            o.broadcast(&elders, &membership.req_join(id));
+            o.broadcast(&self.genesis_nodes, &membership.req_join(id).into());
         }
 
-        State { elders, membership }
+        State {
+            handover,
+            membership,
+        }
     }
 
     fn on_msg(
@@ -45,8 +68,13 @@ impl Actor for Node {
         msg: Self::Msg,
         o: &mut Out<Self>,
     ) {
-        let elders = state.elders.clone();
-        state.to_mut().membership.on_msg(&elders, id, src, msg, o);
+        match msg {
+            Msg::Membership(msg) => {
+                let elders = state.handover.elders();
+                state.to_mut().membership.on_msg(&elders, id, src, msg, o);
+            }
+            Msg::Handover(msg) => state.to_mut().handover.on_msg(id, src, msg, o),
+        }
     }
 }
 
@@ -98,8 +126,8 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        elder_count: 4,
-        server_count: 6,
+        elder_count: 2,
+        server_count: 4,
         network,
     }
     .into_model()
