@@ -2,13 +2,53 @@ mod fake_crypto;
 mod membership;
 mod stable_set;
 
-use std::collections::BTreeSet;
+use std::{borrow::Cow, collections::BTreeSet};
 
-use membership::{Msg, Node};
+use membership::{Membership, Msg};
 use stateright::{
-    actor::{model_peers, Actor, ActorModel, Id, Network},
+    actor::{model_peers, Actor, ActorModel, Id, Network, Out},
     Expectation, Model,
 };
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct State {
+    pub elders: BTreeSet<Id>,
+    pub membership: Membership,
+}
+
+#[derive(Clone)]
+pub struct Node {
+    pub genesis_nodes: BTreeSet<Id>,
+    pub peers: Vec<Id>,
+}
+
+impl Actor for Node {
+    type Msg = Msg;
+    type State = State;
+
+    fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
+        let elders = self.genesis_nodes.clone();
+        let membership = Membership::new(&elders);
+
+        if !self.genesis_nodes.contains(&id) {
+            o.broadcast(&elders, &membership.req_join(id));
+        }
+
+        State { elders, membership }
+    }
+
+    fn on_msg(
+        &self,
+        id: Id,
+        state: &mut Cow<Self::State>,
+        src: Id,
+        msg: Self::Msg,
+        o: &mut Out<Self>,
+    ) {
+        let elders = state.elders.clone();
+        state.to_mut().membership.on_msg(&elders, id, src, msg, o);
+    }
+}
 
 #[derive(Clone)]
 struct ModelCfg {
@@ -58,8 +98,8 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        elder_count: 2,
-        server_count: 5,
+        elder_count: 4,
+        server_count: 6,
         network,
     }
     .into_model()
