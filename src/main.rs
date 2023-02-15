@@ -3,19 +3,27 @@ mod handover;
 mod membership;
 mod stable_set;
 
-use std::{borrow::Cow, collections::BTreeSet};
+use std::{borrow::Cow, collections::BTreeSet, fmt::Debug};
 
 use handover::Handover;
 use membership::Membership;
 use stateright::{
-    actor::{model_peers, Actor, ActorModel, Id, Network, Out},
+    actor::{model_peers, Actor, ActorModel, ActorModelState, Id, Network, Out},
     Expectation, Model,
 };
+
+const ELDER_COUNT: usize = 7;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
     pub handover: Handover,
     pub membership: Membership,
+}
+
+impl State {
+    fn elder_candidates(&self) -> BTreeSet<Id> {
+        BTreeSet::from_iter(self.membership.members().take(ELDER_COUNT).map(|m| m.id))
+    }
 }
 
 #[derive(Clone)]
@@ -24,10 +32,19 @@ pub struct Node {
     pub peers: Vec<Id>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Msg {
     Membership(membership::Msg),
     Handover(handover::Msg),
+}
+
+impl Debug for Msg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Msg::Membership(m) => write!(f, "{m:?}"),
+            Msg::Handover(m) => write!(f, "{m:?}"),
+        }
+    }
 }
 
 impl From<membership::Msg> for Msg {
@@ -73,8 +90,20 @@ impl Actor for Node {
                 let elders = state.handover.elders();
                 state.to_mut().membership.on_msg(&elders, id, src, msg, o);
             }
-            Msg::Handover(msg) => state.to_mut().handover.on_msg(id, src, msg, o),
+            Msg::Handover(msg) => {
+                let elder_candidates = state.elder_candidates();
+                state
+                    .to_mut()
+                    .handover
+                    .on_msg(elder_candidates, id, src, msg, o)
+            }
         }
+
+        let elder_candidates = state.elder_candidates();
+        state
+            .to_mut()
+            .handover
+            .try_trigger_handover(id, elder_candidates, o)
     }
 }
 
@@ -83,6 +112,30 @@ struct ModelCfg {
     elder_count: usize,
     server_count: usize,
     network: Network<<Node as Actor>::Msg>,
+}
+
+fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    let reference_stable_set = state.actor_states[0].membership.stable_set.clone();
+
+    state
+        .actor_states
+        .iter()
+        .all(|actor| actor.membership.stable_set == reference_stable_set)
+}
+
+fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    state
+        .actor_states
+        .iter()
+        .enumerate()
+        .all(|(id, actor)| actor.membership.stable_set.contains(id.into()))
+}
+
+fn prop_oldest_nodes_are_elders(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    state
+        .actor_states
+        .iter()
+        .all(|actor| actor.handover.elders() == actor.elder_candidates())
 }
 
 impl ModelCfg {
@@ -95,26 +148,21 @@ impl ModelCfg {
             .init_network(self.network)
             .property(
                 Expectation::Eventually,
-                "everyone joined and converged",
+                "everyone eventually sees the same stable set",
+                |_, state| prop_stable_set_converged(state),
+            )
+            .property(
+                Expectation::Eventually,
+                "everyone is part of the final stable set",
+                |_, state| prop_stable_set_converged(state) && prop_all_nodes_joined(state),
+            )
+            .property(
+                Expectation::Eventually,
+                "the most stable nodes of the final stable set are elders",
                 |_, state| {
-                    let reference_stable_set = state.actor_states[0].membership.stable_set.clone();
-
-                    let all_nodes_joined = (0..state.actor_states.len())
-                        .into_iter()
-                        .map(Id::from)
-                        .all(|id| reference_stable_set.contains(id));
-
-                    if !all_nodes_joined {
-                        return false;
-                    }
-
-                    for state in state.actor_states.iter() {
-                        if reference_stable_set != state.membership.stable_set {
-                            return false;
-                        }
-                    }
-
-                    true
+                    prop_stable_set_converged(state)
+                        && prop_all_nodes_joined(state)
+                        && prop_oldest_nodes_are_elders(state)
                 },
             )
     }
@@ -123,11 +171,11 @@ impl ModelCfg {
 fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    let network = Network::new_unordered_nonduplicating([]);
+    let network = Network::new_unordered_duplicating([]);
 
     ModelCfg {
         elder_count: 2,
-        server_count: 4,
+        server_count: 5,
         network,
     }
     .into_model()

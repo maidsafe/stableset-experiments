@@ -49,6 +49,14 @@ impl Membership {
         Msg::ReqJoin(id, last_member)
     }
 
+    pub fn is_member(&self, id: Id) -> bool {
+        self.stable_set.contains(id)
+    }
+
+    pub fn members(&self) -> impl Iterator<Item = Member> {
+        self.stable_set.members()
+    }
+
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
         match msg {
             Msg::ReqJoin(candidate_id, member) => {
