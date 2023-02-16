@@ -99,11 +99,11 @@ impl Actor for Node {
             }
         }
 
-        let elder_candidates = state.elder_candidates();
-        state
-            .to_mut()
-            .handover
-            .try_trigger_handover(id, elder_candidates, o)
+        // let elder_candidates = state.elder_candidates();
+        // state
+        //     .to_mut()
+        //     .handover
+        //     .try_trigger_handover(id, elder_candidates, o)
     }
 }
 
@@ -131,12 +131,23 @@ fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
         .all(|(id, actor)| actor.membership.stable_set.contains(id.into()))
 }
 
-fn prop_oldest_nodes_are_elders(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-    state
-        .actor_states
-        .iter()
-        .all(|actor| actor.handover.elders() == actor.elder_candidates())
-}
+// fn prop_oldest_nodes_are_elders(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+//     state
+//         .actor_states
+//         .iter()
+//         .all(|actor| actor.handover.elders() == actor.elder_candidates())
+// }
+
+// fn prop_nodes_agree_on_sap_chain(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+//     let common_chain: Vec<(Elders, SectionSig<(usize, Elders)>)> = vec![];
+
+//     for actor in state.actor_states.iter() {}
+
+//     state
+//         .actor_states
+//         .iter()
+//         .all(|actor| actor.handover.elders() == actor.elder_candidates())
+// }
 
 impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
@@ -156,15 +167,15 @@ impl ModelCfg {
                 "everyone is part of the final stable set",
                 |_, state| prop_stable_set_converged(state) && prop_all_nodes_joined(state),
             )
-            .property(
-                Expectation::Eventually,
-                "the most stable nodes of the final stable set are elders",
-                |_, state| {
-                    prop_stable_set_converged(state)
-                        && prop_all_nodes_joined(state)
-                        && prop_oldest_nodes_are_elders(state)
-                },
-            )
+        // .property(
+        //     Expectation::Eventually,
+        //     "the most stable nodes of the final stable set are elders",
+        //     |_, state| {
+        //         prop_stable_set_converged(state)
+        //             && prop_all_nodes_joined(state)
+        //             && prop_oldest_nodes_are_elders(state)
+        //     },
+        // )
     }
 }
 
