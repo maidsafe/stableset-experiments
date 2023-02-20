@@ -209,6 +209,22 @@ impl ModelCfg {
             .property(Expectation::Always, "Ledger balances", |_, state| {
                 prop_unspent_outputs_equals_genesis_amount(state)
             })
+            .property(
+                Expectation::Always,
+                "Never two nodes aggregate a double spend",
+                |_, state| {
+                    let concurrent_txs = BTreeSet::from_iter(
+                        state
+                            .actor_states
+                            .iter()
+                            .filter_map(|a| a.wallet.pending_tx.clone())
+                            .filter(|(tx, sig)| sig.verify(&sig.voters, tx))
+                            .map(|(tx, _)| tx),
+                    );
+
+                    concurrent_txs.len() <= 1
+                },
+            )
         // .property(
         //     Expectation::Eventually,
         //     "the most stable nodes of the final stable set are elders",

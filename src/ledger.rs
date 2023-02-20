@@ -65,7 +65,7 @@ impl Wallet {
                             && sig.add_share(src, sig_share)
                         {
                             // todo: do something with finished transaction
-                            self.pending_tx = None;
+                            // self.pending_tx = None;
                         }
                     }
                 }
