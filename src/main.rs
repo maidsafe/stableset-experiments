@@ -40,6 +40,7 @@ pub enum Msg {
     Membership(membership::Msg),
     Handover(handover::Msg),
     Wallet(ledger::Msg),
+    StartReissue,
 }
 
 impl Debug for Msg {
@@ -48,6 +49,7 @@ impl Debug for Msg {
             Msg::Membership(m) => write!(f, "{m:?}"),
             Msg::Handover(m) => write!(f, "{m:?}"),
             Msg::Wallet(m) => write!(f, "{m:?}"),
+            Msg::StartReissue => write!(f, "StartReissue"),
         }
     }
 }
@@ -77,26 +79,14 @@ impl Actor for Node {
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         let membership = Membership::new(&self.genesis_nodes);
         let handover = Handover::new(self.genesis_nodes.clone());
-        let mut wallet = Wallet::new(&self.genesis_nodes);
+        let wallet = Wallet::new(&self.genesis_nodes);
 
         if !self.genesis_nodes.contains(&id) {
             o.broadcast(&self.genesis_nodes, &membership.req_join(id).into());
         }
 
         if !self.genesis_nodes.contains(&id) {
-            let reissue_amount = (0..self.peers.len() + 1)
-                .find(|x| Id::from(*x) == id)
-                .unwrap() as u64;
-
-            wallet.reissue(
-                &self.genesis_nodes,
-                vec![wallet.ledger.genesis_dbc.clone()],
-                vec![
-                    reissue_amount,
-                    wallet.ledger.genesis_dbc.amount() - reissue_amount,
-                ],
-                o,
-            );
+            o.send(id, Msg::StartReissue);
         }
 
         State {
@@ -129,6 +119,20 @@ impl Actor for Node {
             Msg::Wallet(msg) => {
                 let elders = state.elder_candidates();
                 state.to_mut().wallet.on_msg(&elders, id, src, msg, o)
+            }
+            Msg::StartReissue => {
+                let elders = state.elder_candidates();
+                let reissue_amount = (0..self.peers.len() + 1)
+                    .find(|x| Id::from(*x) == id)
+                    .unwrap() as u64;
+
+                let input = state.wallet.ledger.genesis_dbc.clone();
+                state.to_mut().wallet.reissue(
+                    &elders,
+                    vec![input.clone()],
+                    vec![reissue_amount, input.amount() - reissue_amount],
+                    o,
+                );
             }
         }
 
