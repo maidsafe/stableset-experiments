@@ -30,7 +30,7 @@ impl<T: Eq> Sig<T> {
 
 #[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct SectionSig<T> {
-    voters: BTreeSet<Id>,
+    pub voters: BTreeSet<Id>,
     shares: BTreeMap<Id, Sig<T>>,
 }
 

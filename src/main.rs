@@ -1,11 +1,13 @@
 mod fake_crypto;
 mod handover;
+mod ledger;
 mod membership;
 mod stable_set;
 
 use std::{borrow::Cow, collections::BTreeSet, fmt::Debug};
 
 use handover::Handover;
+use ledger::Wallet;
 use membership::Membership;
 use stateright::{
     actor::{model_peers, Actor, ActorModel, ActorModelState, Id, Network, Out},
@@ -18,6 +20,7 @@ const ELDER_COUNT: usize = 7;
 pub struct State {
     pub handover: Handover,
     pub membership: Membership,
+    pub wallet: Wallet,
 }
 
 impl State {
@@ -36,6 +39,7 @@ pub struct Node {
 pub enum Msg {
     Membership(membership::Msg),
     Handover(handover::Msg),
+    Wallet(ledger::Msg),
 }
 
 impl Debug for Msg {
@@ -43,6 +47,7 @@ impl Debug for Msg {
         match self {
             Msg::Membership(m) => write!(f, "{m:?}"),
             Msg::Handover(m) => write!(f, "{m:?}"),
+            Msg::Wallet(m) => write!(f, "{m:?}"),
         }
     }
 }
@@ -59,6 +64,12 @@ impl From<handover::Msg> for Msg {
     }
 }
 
+impl From<ledger::Msg> for Msg {
+    fn from(msg: ledger::Msg) -> Self {
+        Self::Wallet(msg)
+    }
+}
+
 impl Actor for Node {
     type Msg = Msg;
     type State = State;
@@ -66,14 +77,32 @@ impl Actor for Node {
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         let membership = Membership::new(&self.genesis_nodes);
         let handover = Handover::new(self.genesis_nodes.clone());
+        let mut wallet = Wallet::new(&self.genesis_nodes);
 
         if !self.genesis_nodes.contains(&id) {
             o.broadcast(&self.genesis_nodes, &membership.req_join(id).into());
         }
 
+        if !self.genesis_nodes.contains(&id) {
+            let reissue_amount = (0..self.peers.len() + 1)
+                .find(|x| Id::from(*x) == id)
+                .unwrap() as u64;
+
+            wallet.reissue(
+                &self.genesis_nodes,
+                vec![wallet.ledger.genesis_dbc.clone()],
+                vec![
+                    reissue_amount,
+                    wallet.ledger.genesis_dbc.amount() - reissue_amount,
+                ],
+                o,
+            );
+        }
+
         State {
             handover,
             membership,
+            wallet,
         }
     }
 
@@ -87,7 +116,7 @@ impl Actor for Node {
     ) {
         match msg {
             Msg::Membership(msg) => {
-                let elders = state.handover.elders();
+                let elders = state.elder_candidates();
                 state.to_mut().membership.on_msg(&elders, id, src, msg, o);
             }
             Msg::Handover(msg) => {
@@ -96,6 +125,10 @@ impl Actor for Node {
                     .to_mut()
                     .handover
                     .on_msg(elder_candidates, id, src, msg, o)
+            }
+            Msg::Wallet(msg) => {
+                let elders = state.elder_candidates();
+                state.to_mut().wallet.on_msg(&elders, id, src, msg, o)
             }
         }
 
@@ -129,6 +162,12 @@ fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
         .iter()
         .enumerate()
         .all(|(id, actor)| actor.membership.stable_set.contains(id.into()))
+}
+
+fn prop_unspent_outputs_equals_genesis_amount(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    state.actor_states.iter().all(|actor| {
+        actor.wallet.ledger.genesis_amount() == actor.wallet.ledger.sum_unspent_outputs()
+    })
 }
 
 // fn prop_oldest_nodes_are_elders(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
@@ -167,6 +206,9 @@ impl ModelCfg {
                 "everyone is part of the final stable set",
                 |_, state| prop_stable_set_converged(state) && prop_all_nodes_joined(state),
             )
+            .property(Expectation::Always, "Ledger balances", |_, state| {
+                prop_unspent_outputs_equals_genesis_amount(state)
+            })
         // .property(
         //     Expectation::Eventually,
         //     "the most stable nodes of the final stable set are elders",
@@ -185,8 +227,8 @@ fn main() {
     let network = Network::new_unordered_duplicating([]);
 
     ModelCfg {
-        elder_count: 2,
-        server_count: 5,
+        elder_count: 1,
+        server_count: 6,
         network,
     }
     .into_model()
