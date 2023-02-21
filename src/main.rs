@@ -85,9 +85,9 @@ impl Actor for Node {
             o.broadcast(&self.genesis_nodes, &membership.req_join(id).into());
         }
 
-        if !self.genesis_nodes.contains(&id) {
-            o.send(id, Msg::StartReissue);
-        }
+        // if !self.genesis_nodes.contains(&id) {
+        //     o.send(id, Msg::StartReissue);
+        // }
 
         State {
             handover,
@@ -122,15 +122,17 @@ impl Actor for Node {
             }
             Msg::StartReissue => {
                 let elders = state.elder_candidates();
+                let input = state.wallet.ledger.genesis_dbc.clone();
+
                 let reissue_amount = (0..self.peers.len() + 1)
                     .find(|x| Id::from(*x) == id)
                     .unwrap() as u64;
+                let difference = input.amount() - reissue_amount;
 
-                let input = state.wallet.ledger.genesis_dbc.clone();
                 state.to_mut().wallet.reissue(
                     &elders,
-                    vec![input.clone()],
-                    vec![reissue_amount, input.amount() - reissue_amount],
+                    vec![input],
+                    vec![reissue_amount, difference],
                     o,
                 );
             }
@@ -244,11 +246,11 @@ impl ModelCfg {
 fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    let network = Network::new_unordered_duplicating([]);
+    let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
         elder_count: 1,
-        server_count: 6,
+        server_count: 3,
         network,
     }
     .into_model()

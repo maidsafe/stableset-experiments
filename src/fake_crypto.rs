@@ -5,6 +5,10 @@ use std::{
 
 use stateright::actor::Id;
 
+fn supermajority(m: usize, n: usize) -> bool {
+    3 * m > 2 * n
+}
+
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Sig<T> {
     // HACK: we'll just use the signer's Id and msg as the signature
@@ -25,6 +29,54 @@ impl<T: Eq> Sig<T> {
 
     pub fn sign(signer: Id, msg: T) -> Self {
         Self { signer, msg }
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct SigSet<T> {
+    shares: BTreeMap<Id, Sig<T>>,
+}
+
+impl<T: Eq> SigSet<T> {
+    pub fn new() -> Self {
+        Self {
+            shares: BTreeMap::new(),
+        }
+    }
+
+    pub fn add_share(&mut self, signer: Id, sig: Sig<T>) {
+        self.shares.insert(signer, sig);
+    }
+
+    pub fn verify(&self, voters: &BTreeSet<Id>, msg: &T) -> bool {
+        let valid_shares_from_voters = self
+            .shares
+            .iter()
+            .filter(|(id, _)| voters.contains(id))
+            .filter(|(id, sig)| sig.verify(**id, msg))
+            .count();
+
+        supermajority(valid_shares_from_voters, voters.len())
+    }
+}
+
+impl<T: Debug + Clone + Ord> Debug for SigSet<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut msgs: BTreeMap<T, BTreeSet<Id>> = Default::default();
+
+        for (signer, sig_share) in self.shares.iter() {
+            msgs.entry(sig_share.msg.clone())
+                .or_default()
+                .insert(*signer);
+        }
+
+        write!(f, "section_sig(")?;
+
+        for (msg, signers) in msgs {
+            write!(f, "{msg:?}@{signers:?}")?;
+        }
+
+        write!(f, ")")
     }
 }
 
@@ -57,7 +109,7 @@ impl<T: Eq> SectionSig<T> {
     }
 
     fn has_threshold(&self) -> bool {
-        3 * self.shares.len() > 2 * self.voters.len()
+        supermajority(self.shares.len(), self.voters.len())
     }
 }
 

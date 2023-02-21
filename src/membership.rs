@@ -3,12 +3,10 @@ use std::collections::BTreeSet;
 
 use stateright::actor::{Id, Out};
 
+use crate::fake_crypto::SigSet;
 use crate::stable_set::StableSet;
 use crate::Node;
-use crate::{
-    fake_crypto::{SectionSig, Sig},
-    stable_set::Member,
-};
+use crate::{fake_crypto::Sig, stable_set::Member};
 
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -22,7 +20,7 @@ pub enum Msg {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Membership {
     pub stable_set: StableSet,
-    pub joining_state: Option<(u64, SectionSig<(u64, Id)>)>,
+    pub joining_state: Option<(u64, SigSet<(u64, Id)>)>,
 }
 
 impl Membership {
@@ -30,7 +28,7 @@ impl Membership {
         let mut stable_set = StableSet::default();
 
         for node in elders.iter().copied() {
-            let mut sig = SectionSig::new(elders.clone());
+            let mut sig = SigSet::new();
             for genesis_signer in elders.iter().copied() {
                 sig.add_share(genesis_signer, Sig::sign(genesis_signer, (0, node)));
             }
@@ -97,14 +95,13 @@ impl Membership {
                                     &Msg::ReqJoin(id, last_member).into(),
                                 );
 
-                                self.joining_state =
-                                    Some((ord_idx, SectionSig::new(elders.clone())));
+                                self.joining_state = Some((ord_idx, SigSet::new()));
                                 &mut self.joining_state.as_mut().unwrap().1
                             }
                             Ordering::Equal => sig,
                         }
                     } else {
-                        self.joining_state = Some((ord_idx, SectionSig::new(elders.clone())));
+                        self.joining_state = Some((ord_idx, SigSet::new()));
                         &mut self.joining_state.as_mut().unwrap().1
                     };
 

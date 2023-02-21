@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use stateright::actor::Id;
 
-use crate::fake_crypto::SectionSig;
+use crate::fake_crypto::SigSet;
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub ord_idx: u64,
     pub id: Id,
-    pub sig: SectionSig<(u64, Id)>,
+    pub sig: SigSet<(u64, Id)>,
 }
 
 impl Member {
@@ -25,7 +25,7 @@ impl std::fmt::Debug for Member {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
 pub struct StableSet {
-    members: BTreeMap<(u64, Id), SectionSig<(u64, Id)>>,
+    members: BTreeMap<(u64, Id), SigSet<(u64, Id)>>,
     dead: BTreeSet<Id>,
 }
 
@@ -34,8 +34,8 @@ impl StableSet {
         self.add(member.ord_idx, member.id, member.sig);
     }
 
-    pub fn add(&mut self, ordering_id: u64, id: Id, section_sig: SectionSig<(u64, Id)>) {
-        self.members.insert((ordering_id, id), section_sig);
+    pub fn add(&mut self, ordering_id: u64, id: Id, sig: SigSet<(u64, Id)>) {
+        self.members.insert((ordering_id, id), sig);
     }
 
     pub fn remove(&mut self, id: Id) {
