@@ -160,6 +160,7 @@ fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
         .actor_states
         .iter()
         .all(|actor| actor.membership.stable_set == reference_stable_set)
+        && reference_stable_set.ids().count() == reference_stable_set.members().count()
 }
 
 fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
@@ -250,7 +251,7 @@ fn main() {
 
     ModelCfg {
         elder_count: 1,
-        server_count: 3,
+        server_count: 4,
         network,
     }
     .into_model()

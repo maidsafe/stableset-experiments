@@ -100,7 +100,9 @@ impl Membership {
                     self.stable_set.add(member.clone(), id);
 
                     o.broadcast(
-                        BTreeSet::from_iter([src, candidate_id]).union(elders),
+                        &BTreeSet::from_iter(
+                            [src, candidate_id].into_iter().chain(self.stable_set.ids()),
+                        ),
                         &self.build_msg(Action::JoinShare(member)).into(),
                     );
                 }

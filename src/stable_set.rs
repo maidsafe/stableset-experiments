@@ -103,7 +103,7 @@ impl StableSet {
     }
 
     pub fn contains(&self, id: Id) -> bool {
-        !self.dead.contains(&id) && self.ids().any(|m| m == id)
+        self.ids().any(|m| m == id)
     }
 
     pub fn ids(&self) -> impl Iterator<Item = Id> + '_ {
@@ -115,6 +115,6 @@ impl StableSet {
     }
 
     pub(crate) fn has_seen(&self, id: Id) -> bool {
-        self.dead.contains(&id) || self.ids().any(|m| m == id)
+        self.dead.contains(&id) || self.contains(id)
     }
 }
