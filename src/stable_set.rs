@@ -1,20 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+};
 
 use stateright::actor::Id;
 
-use crate::fake_crypto::SigSet;
+use crate::{fake_crypto::supermajority, handover::Elders};
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
     pub ord_idx: u64,
     pub id: Id,
-    pub sig: SigSet<(u64, Id)>,
-}
-
-impl Member {
-    pub fn verify(&self, voters: &BTreeSet<Id>) -> bool {
-        self.sig.verify(voters, &(self.ord_idx, self.id))
-    }
 }
 
 impl std::fmt::Debug for Member {
@@ -23,30 +19,83 @@ impl std::fmt::Debug for Member {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
+#[derive(
+    Clone, Eq, Hash, PartialEq, PartialOrd, Ord, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct StableSet {
-    members: BTreeMap<(u64, Id), SigSet<(u64, Id)>>,
+    members: BTreeSet<Member>,
     dead: BTreeSet<Id>,
+    joining_members: BTreeMap<Member, BTreeSet<Id>>,
+}
+
+impl Debug for StableSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SS({:?}, joining:{:?})",
+            self.members, self.joining_members
+        )
+    }
 }
 
 impl StableSet {
-    pub fn apply(&mut self, member: Member) {
-        self.add(member.ord_idx, member.id, member.sig);
+    pub fn merge(&mut self, witness: Id, other: StableSet, elders: &Elders) {
+        for member in other.members {
+            if self.has_seen(member.id) {
+                continue;
+            }
+
+            self.joining_members
+                .entry(member)
+                .or_default()
+                .insert(witness);
+        }
+
+        self.process_ready_to_join(elders);
+        // TODO: merge with the dead nodes as well (needs the same flow as the joining nodes)
     }
 
-    pub fn add(&mut self, ordering_id: u64, id: Id, sig: SigSet<(u64, Id)>) {
-        self.members.insert((ordering_id, id), sig);
+    pub fn process_ready_to_join(&mut self, elders: &Elders) -> bool {
+        let mut ready_to_join = Vec::new();
+
+        for (member, witnesses) in self.joining_members.iter() {
+            if supermajority(witnesses.intersection(elders).count(), elders.len()) {
+                ready_to_join.push(member.clone());
+            }
+        }
+
+        let updated = !ready_to_join.is_empty();
+
+        for member in ready_to_join {
+            self.joining_members.remove(&member);
+
+            if let Some(existing_member_with_id) = self.members().find(|m| m.id == member.id) {
+                if existing_member_with_id.ord_idx >= member.ord_idx {
+                    continue;
+                } else {
+                    self.members.remove(&existing_member_with_id);
+                }
+            }
+
+            self.members.insert(member);
+        }
+
+        updated
+    }
+
+    pub fn add(&mut self, member: Member, witness: Id) {
+        if !self.has_seen(member.id) {
+            self.joining_members
+                .entry(member)
+                .or_default()
+                .insert(witness);
+        }
     }
 
     pub fn remove(&mut self, id: Id) {
         self.dead.insert(id);
 
-        let to_be_removed = Vec::from_iter(
-            self.members
-                .keys()
-                .filter(|(_, other_id)| other_id == &id)
-                .cloned(),
-        );
+        let to_be_removed = Vec::from_iter(self.members.iter().filter(|m| m.id == id).cloned());
 
         for member in to_be_removed {
             self.members.remove(&member);
@@ -54,31 +103,18 @@ impl StableSet {
     }
 
     pub fn contains(&self, id: Id) -> bool {
-        !self.dead.contains(&id) && self.members.keys().any(|(_, m)| *m == id)
+        !self.dead.contains(&id) && self.ids().any(|m| m == id)
     }
 
-    pub fn last_member(&self) -> Option<Member> {
-        self.members
-            .last_key_value()
-            .map(|((ord_idx, id), sig)| Member {
-                ord_idx: *ord_idx,
-                id: *id,
-                sig: sig.clone(),
-            })
-    }
-
-    pub fn ids(&self) -> impl Iterator<Item = &Id> {
-        self.members.keys().map(|(_, id)| id)
+    pub fn ids(&self) -> impl Iterator<Item = Id> + '_ {
+        self.members.iter().map(|m| m.id)
     }
 
     pub fn members(&self) -> impl Iterator<Item = Member> {
-        self.members
-            .clone()
-            .into_iter()
-            .map(|((ord_idx, id), sig)| Member { ord_idx, id, sig })
+        self.members.clone().into_iter()
     }
 
     pub(crate) fn has_seen(&self, id: Id) -> bool {
-        self.dead.contains(&id) || self.members.keys().any(|(_, m)| *m == id)
+        self.dead.contains(&id) || self.ids().any(|m| m == id)
     }
 }

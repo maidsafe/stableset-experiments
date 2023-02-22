@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::fmt::Debug;
 
 use stateright::actor::{Id, Out};
 
@@ -11,10 +12,22 @@ use crate::{fake_crypto::Sig, stable_set::Member};
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-pub enum Msg {
-    ReqJoin(Id, Member),
-    JoinShare(u64, Id, Sig<(u64, Id)>, Member),
-    Sync(Vec<Member>),
+pub enum Action {
+    ReqJoin(Id),
+    JoinShare(Member),
+    Nop,
+}
+
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+pub struct Msg {
+    stable_set: StableSet,
+    action: Action,
+}
+
+impl Debug for Msg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Msg({:?}, {:?})", self.stable_set, self.action)
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -24,17 +37,22 @@ pub struct Membership {
 }
 
 impl Membership {
-    pub fn new(elders: &BTreeSet<Id>) -> Self {
+    pub fn new(genesis: &BTreeSet<Id>) -> Self {
         let mut stable_set = StableSet::default();
 
-        for node in elders.iter().copied() {
-            let mut sig = SigSet::new();
-            for genesis_signer in elders.iter().copied() {
-                sig.add_share(genesis_signer, Sig::sign(genesis_signer, (0, node)));
+        for genesis_id in genesis.iter().copied() {
+            let genesis_member = Member {
+                id: genesis_id,
+                ord_idx: 0,
+            };
+            for other_genesis_id in genesis.iter().copied() {
+                stable_set.add(genesis_member.clone(), other_genesis_id);
             }
-
-            stable_set.add(0, node, sig);
         }
+
+        stable_set.process_ready_to_join(genesis);
+
+        assert_eq!(&BTreeSet::from_iter(stable_set.ids()), genesis);
 
         Self {
             stable_set,
@@ -42,9 +60,13 @@ impl Membership {
         }
     }
 
+    fn build_msg(&self, action: Action) -> Msg {
+        let stable_set = self.stable_set.clone();
+        Msg { stable_set, action }
+    }
+
     pub fn req_join(&self, id: Id) -> Msg {
-        let last_member = self.stable_set.last_member().unwrap();
-        Msg::ReqJoin(id, last_member)
+        self.build_msg(Action::ReqJoin(id))
     }
 
     pub fn is_member(&self, id: Id) -> bool {
@@ -56,89 +78,46 @@ impl Membership {
     }
 
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
-        match msg {
-            Msg::ReqJoin(candidate_id, member) => {
-                if !self.stable_set.contains(candidate_id) && member.verify(elders) {
-                    self.stable_set.apply(member);
-                    let last_member = self.stable_set.last_member().unwrap();
-                    let ord_idx = last_member.ord_idx + 1;
-                    let sig = Sig::sign(id, (ord_idx, candidate_id));
-                    o.send(
-                        src,
-                        Msg::JoinShare(ord_idx, candidate_id, sig, last_member).into(),
-                    );
-                }
-            }
-            Msg::JoinShare(ord_idx, candidate_id, sig, last_member) => {
-                let join_msg = (ord_idx, candidate_id);
-                if id == candidate_id
-                    && !self.stable_set.contains(id)
-                    && sig.verify(src, &join_msg)
-                    && last_member.verify(elders)
-                    && last_member.ord_idx + 1 == ord_idx
-                {
-                    self.stable_set.apply(last_member);
+        let Msg { stable_set, action } = msg;
+        self.stable_set.merge(src, stable_set, elders);
 
-                    let joining_sig = if let Some((curr_ord_idx, sig)) = self.joining_state.as_mut()
-                    {
-                        match (*curr_ord_idx).cmp(&ord_idx) {
-                            Ordering::Greater => {
-                                // we've moved on to larger indices
-                                let last_member = self.stable_set.last_member().unwrap();
-                                o.send(src, Msg::ReqJoin(id, last_member).into());
-                                return;
-                            }
-                            Ordering::Less => {
-                                let last_member = self.stable_set.last_member().unwrap();
-                                o.broadcast(
-                                    elders.iter().filter(|id| id != &&src),
-                                    &Msg::ReqJoin(id, last_member).into(),
-                                );
+        match action {
+            Action::ReqJoin(candidate_id) => {
+                if !self.stable_set.has_seen(candidate_id) && elders.contains(&id) {
+                    let latest_ord_idx = self
+                        .stable_set
+                        .members()
+                        .map(|m| m.ord_idx)
+                        .max()
+                        .unwrap_or(0);
+                    let ord_idx = latest_ord_idx + 1;
 
-                                self.joining_state = Some((ord_idx, SigSet::new()));
-                                &mut self.joining_state.as_mut().unwrap().1
-                            }
-                            Ordering::Equal => sig,
-                        }
-                    } else {
-                        self.joining_state = Some((ord_idx, SigSet::new()));
-                        &mut self.joining_state.as_mut().unwrap().1
+                    let member = Member {
+                        id: candidate_id,
+                        ord_idx,
                     };
+                    self.stable_set.add(member.clone(), src);
+                    self.stable_set.add(member.clone(), id);
 
-                    joining_sig.add_share(src, sig);
-
-                    if joining_sig.verify(elders, &join_msg) {
-                        let member = Member {
-                            ord_idx,
-                            id: candidate_id,
-                            sig: joining_sig.clone(),
-                        };
-                        self.stable_set.apply(member.clone());
-
-                        o.broadcast(
-                            self.stable_set.ids().filter(|i| i != &&id),
-                            &Msg::Sync(vec![member]).into(),
-                        )
-                    }
-                }
-            }
-            Msg::Sync(msgs) => {
-                let mut new_members = Vec::new();
-                for member in msgs {
-                    if !self.stable_set.has_seen(member.id) && member.verify(elders) {
-                        new_members.push(member.clone());
-                        self.stable_set.apply(member);
-                    }
-                }
-
-                if !new_members.is_empty() {
                     o.broadcast(
-                        new_members.iter().map(|m| &m.id),
-                        &Msg::Sync(Vec::from_iter(self.stable_set.members())).into(),
+                        BTreeSet::from_iter([src, candidate_id]).union(elders),
+                        &self.build_msg(Action::JoinShare(member)).into(),
                     );
-                    // o.broadcast(self.stable_set.ids(), &Msg::Sync(new_members));
                 }
             }
+            Action::JoinShare(member) => {
+                if !self.stable_set.has_seen(member.id) {
+                    self.stable_set.add(member, src);
+
+                    if self.stable_set.process_ready_to_join(elders) {
+                        o.broadcast(
+                            &BTreeSet::from_iter(self.stable_set.ids()),
+                            &self.build_msg(Action::Nop).into(),
+                        );
+                    }
+                }
+            }
+            Action::Nop => {}
         }
     }
 }

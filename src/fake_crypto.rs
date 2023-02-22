@@ -5,7 +5,7 @@ use std::{
 
 use stateright::actor::Id;
 
-fn supermajority(m: usize, n: usize) -> bool {
+pub fn supermajority(m: usize, n: usize) -> bool {
     3 * m > 2 * n
 }
 
@@ -41,6 +41,12 @@ impl<T: Eq> SigSet<T> {
     pub fn new() -> Self {
         Self {
             shares: BTreeMap::new(),
+        }
+    }
+
+    pub fn merge(&mut self, other: SigSet<T>) {
+        for (signer, sig) in other.shares {
+            self.add_share(signer, sig);
         }
     }
 
