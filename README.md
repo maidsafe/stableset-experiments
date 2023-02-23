@@ -8,7 +8,7 @@ Also, we use the master of stateright which may break as they develop it, so bew
 If you do a `cargo run --release` and then open http://127.0.0.1:3000 you will see the GUI. You can then manually click what messages to send or indeed click run to completion and it will show you where any current issues are. Be aware we almost always have issues there as we are iteratively testing, so don’t feel disheartened, it’s actually great.
 
 This is a screenshot of what the GUI tool looks like with the results.
-[stableset-experiments|590x500](upload://gZR5rXpwUwMF31r9TDj5sz5Ba1t.png)
+[stateright-explorer|590x500](resources/stateright_explorer.png)
 
 ## License
 
