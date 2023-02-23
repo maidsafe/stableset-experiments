@@ -148,8 +148,8 @@ impl Actor for Node {
 
 #[derive(Clone)]
 struct ModelCfg {
-    elder_count: usize,
-    server_count: usize,
+    genesis_nodes: usize,
+    final_nodes: usize,
     network: Network<<Node as Actor>::Msg>,
 }
 
@@ -198,9 +198,11 @@ fn prop_unspent_outputs_equals_genesis_amount(state: &ActorModelState<Node, Vec<
 impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
         ActorModel::new(self.clone(), vec![])
-            .actors((0..self.server_count).map(|i| Node {
-                genesis_nodes: BTreeSet::from_iter((0..self.elder_count).into_iter().map(Id::from)),
-                peers: model_peers(i, self.server_count),
+            .actors((0..self.final_nodes).map(|i| Node {
+                genesis_nodes: BTreeSet::from_iter(
+                    (0..self.genesis_nodes).into_iter().map(Id::from),
+                ),
+                peers: model_peers(i, self.final_nodes),
             }))
             .init_network(self.network)
             .property(
@@ -250,8 +252,8 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        elder_count: 1,
-        server_count: 4,
+        genesis_nodes: 1,
+        final_nodes: 4,
         network,
     }
     .into_model()
