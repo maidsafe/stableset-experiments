@@ -25,7 +25,7 @@ impl std::fmt::Debug for Member {
 pub struct StableSet {
     members: BTreeSet<Member>,
     dead: BTreeSet<Id>,
-    joining_members: BTreeMap<Member, BTreeSet<Id>>,
+    pub joining_members: BTreeMap<Member, BTreeSet<Id>>,
 }
 
 impl Debug for StableSet {
@@ -83,13 +83,22 @@ impl StableSet {
         updated
     }
 
-    pub fn add(&mut self, member: Member, witness: Id) {
+    pub fn add(&mut self, member: Member, witness: Id) -> bool {
         if !self.has_seen(member.id) {
             self.joining_members
                 .entry(member)
                 .or_default()
-                .insert(witness);
+                .insert(witness)
+        } else {
+            false
         }
+    }
+
+    pub fn witnesses(&mut self, member: &Member) -> BTreeSet<Id> {
+        self.joining_members
+            .get(member)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn remove(&mut self, id: Id) {

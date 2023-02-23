@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use stateright::actor::{Id, Out};
 
 use crate::fake_crypto::SigSet;
+use crate::handover::Elders;
 use crate::stable_set::StableSet;
 use crate::Node;
 use crate::{fake_crypto::Sig, stable_set::Member};
@@ -61,7 +62,8 @@ impl Membership {
     }
 
     fn build_msg(&self, action: Action) -> Msg {
-        let stable_set = self.stable_set.clone();
+        let mut stable_set = self.stable_set.clone();
+        stable_set.joining_members.clear();
         Msg { stable_set, action }
     }
 
@@ -79,7 +81,9 @@ impl Membership {
 
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
         let Msg { stable_set, action } = msg;
-        self.stable_set.merge(src, stable_set, elders);
+        for member in stable_set.members() {
+            self.handle_join_share(id, elders, member, src, o);
+        }
 
         match action {
             Action::ReqJoin(candidate_id) => {
@@ -96,30 +100,46 @@ impl Membership {
                         id: candidate_id,
                         ord_idx,
                     };
-                    self.stable_set.add(member.clone(), src);
-                    self.stable_set.add(member.clone(), id);
 
-                    o.broadcast(
-                        &BTreeSet::from_iter(
-                            [src, candidate_id].into_iter().chain(self.stable_set.ids()),
-                        ),
-                        &self.build_msg(Action::JoinShare(member)).into(),
-                    );
+                    self.handle_join_share(id, elders, member, id, o);
                 }
             }
             Action::JoinShare(member) => {
-                if !self.stable_set.has_seen(member.id) {
-                    self.stable_set.add(member, src);
-
-                    if self.stable_set.process_ready_to_join(elders) {
-                        o.broadcast(
-                            &BTreeSet::from_iter(self.stable_set.ids()),
-                            &self.build_msg(Action::Nop).into(),
-                        );
-                    }
-                }
+                self.handle_join_share(id, elders, member, src, o);
             }
             Action::Nop => {}
+        }
+    }
+
+    fn handle_join_share(
+        &mut self,
+        id: Id,
+        elders: &Elders,
+        member: Member,
+        witness: Id,
+        o: &mut Out<Node>,
+    ) {
+        if self.stable_set.has_seen(member.id) {
+            return;
+        }
+
+        let first_time_seeing_member = self.stable_set.witnesses(&member).is_empty();
+
+        self.stable_set.add(member.clone(), witness);
+        self.stable_set.add(member.clone(), id);
+
+        if self.stable_set.process_ready_to_join(elders) && elders.contains(&id) {
+            o.broadcast(
+                &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
+                &self.build_msg(Action::Nop).into(),
+            );
+            // o.send(member.id, self.build_msg(Action::Nop).into());
+        } else if first_time_seeing_member && member.id != id {
+            o.broadcast(
+                elders.iter().filter(|e| e != &&id),
+                // &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
+                &self.build_msg(Action::JoinShare(member.clone())).into(),
+            );
         }
     }
 }
