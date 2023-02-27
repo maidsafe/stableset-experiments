@@ -109,6 +109,16 @@ impl Membership {
             }
             Action::Nop => {}
         }
+
+        let mut should_send_sync = false;
+        for member in self.stable_set.members() {
+            if !stable_set.has_member(&member) {
+                should_send_sync = true;
+            }
+        }
+        if should_send_sync {
+            o.send(src, self.build_msg(Action::Nop).into());
+        }
     }
 
     fn handle_join_share(

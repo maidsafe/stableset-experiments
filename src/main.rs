@@ -14,7 +14,7 @@ use stateright::{
     Expectation, Model,
 };
 
-const ELDER_COUNT: usize = 1;
+const ELDER_COUNT: usize = 3;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {

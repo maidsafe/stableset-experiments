@@ -111,6 +111,10 @@ impl StableSet {
         }
     }
 
+    pub fn has_member(&self, member: &Member) -> bool {
+        self.members.contains(member)
+    }
+
     pub fn contains(&self, id: Id) -> bool {
         self.ids().any(|m| m == id)
     }
