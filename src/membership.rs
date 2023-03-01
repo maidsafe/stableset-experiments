@@ -151,8 +151,7 @@ impl Membership {
             // o.send(member.id, self.build_msg(Action::Nop).into());
         } else if first_time_seeing_member && member.id != id {
             o.broadcast(
-                elders.iter().filter(|e| e != &&id),
-                // &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
+                BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
                 &self.build_msg(Action::JoinShare(member.clone())).into(),
             );
         }
