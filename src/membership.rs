@@ -51,7 +51,7 @@ impl Membership {
             }
         }
 
-        stable_set.process_ready_to_join(genesis);
+        stable_set.process_ready_actions(genesis);
 
         assert_eq!(&BTreeSet::from_iter(stable_set.ids()), genesis);
 
@@ -143,7 +143,7 @@ impl Membership {
         self.stable_set.add(member.clone(), witness);
         self.stable_set.add(member.clone(), id);
 
-        if self.stable_set.process_ready_to_join(elders) && elders.contains(&id) {
+        if self.stable_set.process_ready_actions(elders) && elders.contains(&id) {
             o.broadcast(
                 &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
                 &self.build_msg(Action::Nop).into(),

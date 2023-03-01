@@ -26,6 +26,7 @@ pub struct StableSet {
     members: BTreeSet<Member>,
     dead: BTreeSet<Id>,
     pub joining_members: BTreeMap<Member, BTreeSet<Id>>,
+    pub leaving_members: BTreeMap<Member, BTreeSet<Id>>,
 }
 
 impl Debug for StableSet {
@@ -51,20 +52,24 @@ impl StableSet {
                 .insert(witness);
         }
 
-        self.process_ready_to_join(elders);
+        self.process_ready_actions(elders);
         // TODO: merge with the dead nodes as well (needs the same flow as the joining nodes)
     }
 
-    pub fn process_ready_to_join(&mut self, elders: &Elders) -> bool {
-        let mut ready_to_join = Vec::new();
+    pub fn process_ready_actions(&mut self, elders: &Elders) -> bool {
+        let mut updated = false;
 
-        for (member, witnesses) in self.joining_members.iter() {
-            if supermajority(witnesses.intersection(elders).count(), elders.len()) {
-                ready_to_join.push(member.clone());
-            }
-        }
+        let ready_to_join = Vec::from_iter(
+            self.joining_members
+                .iter()
+                .filter(|(_, witnesses)| {
+                    supermajority(witnesses.intersection(elders).count(), elders.len())
+                })
+                .map(|(member, _)| member)
+                .cloned(),
+        );
 
-        let updated = !ready_to_join.is_empty();
+        updated |= !ready_to_join.is_empty();
 
         for member in ready_to_join {
             self.joining_members.remove(&member);
@@ -78,6 +83,26 @@ impl StableSet {
             }
 
             self.members.insert(member);
+        }
+
+        let ready_to_leave = Vec::from_iter(
+            self.leaving_members
+                .iter()
+                .filter(|(_, witnesses)| {
+                    supermajority(witnesses.intersection(elders).count(), elders.len())
+                })
+                .map(|(member, _)| member)
+                .cloned(),
+        );
+
+        updated |= !ready_to_leave.is_empty();
+
+        for member in ready_to_leave {
+            self.leaving_members.remove(&member);
+
+            if let Some(existing_member_with_id) = self.members().find(|m| m.id == member.id) {
+                self.members.remove(&existing_member_with_id);
+            }
         }
 
         updated
