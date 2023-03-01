@@ -7,8 +7,8 @@ use stateright::actor::{Id, Out};
 use crate::fake_crypto::SigSet;
 use crate::handover::Elders;
 use crate::stable_set::StableSet;
-use crate::Node;
 use crate::{fake_crypto::Sig, stable_set::Member};
+use crate::{Node, ELDER_COUNT};
 
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -79,6 +79,10 @@ impl Membership {
         self.stable_set.members()
     }
 
+    pub fn elder_candidates(&self) -> Elders {
+        BTreeSet::from_iter(self.members().take(ELDER_COUNT).map(|m| m.id))
+    }
+
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
         let Msg { stable_set, action } = msg;
         for member in stable_set.members() {
@@ -116,6 +120,7 @@ impl Membership {
                 should_send_sync = true;
             }
         }
+
         if should_send_sync {
             o.send(src, self.build_msg(Action::Nop).into());
         }

@@ -25,7 +25,7 @@ pub struct State {
 
 impl State {
     fn elder_candidates(&self) -> BTreeSet<Id> {
-        BTreeSet::from_iter(self.membership.members().take(ELDER_COUNT).map(|m| m.id))
+        self.membership.elder_candidates()
     }
 }
 
