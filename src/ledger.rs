@@ -4,7 +4,7 @@ use stateright::actor::{Id, Out};
 
 use crate::{
     fake_crypto::{SectionSig, Sig},
-    handover::Elders,
+    membership::Elders,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

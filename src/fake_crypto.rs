@@ -5,8 +5,8 @@ use std::{
 
 use stateright::actor::Id;
 
-pub fn supermajority(m: usize, n: usize) -> bool {
-    3 * m > 2 * n
+pub fn majority(m: usize, n: usize) -> bool {
+    m > n / 2
 }
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -62,7 +62,7 @@ impl<T: Eq> SigSet<T> {
             .filter(|(id, sig)| sig.verify(**id, msg))
             .count();
 
-        supermajority(valid_shares_from_voters, voters.len())
+        majority(valid_shares_from_voters, voters.len())
     }
 }
 
@@ -115,7 +115,7 @@ impl<T: Eq> SectionSig<T> {
     }
 
     fn has_threshold(&self) -> bool {
-        supermajority(self.shares.len(), self.voters.len())
+        majority(self.shares.len(), self.voters.len())
     }
 }
 
