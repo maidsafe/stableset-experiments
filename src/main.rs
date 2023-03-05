@@ -17,6 +17,7 @@ const ELDER_COUNT: usize = 3;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
     pub membership: Membership,
+    is_leaving: bool,
     // pub wallet: Wallet,
 }
 
@@ -81,6 +82,7 @@ impl Actor for Node {
 
         State {
             membership, /* , wallet */
+            is_leaving: false,
         }
     }
 
@@ -99,8 +101,9 @@ impl Actor for Node {
 
                 if id > Id::from(self.peers.len() / 2)
                     && state.membership.is_member(id)
-                    && !state.membership.is_leaving(id)
+                    && !state.is_leaving
                 {
+                    state.to_mut().is_leaving = true;
                     o.send(id, Msg::TriggerLeave);
                 }
             }
