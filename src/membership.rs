@@ -200,8 +200,4 @@ impl Membership {
             );
         }
     }
-
-    pub(crate) fn is_leaving(&self, id: Id) -> bool {
-        self.stable_set.leaving().any(|m| m.id == id)
-    }
 }
