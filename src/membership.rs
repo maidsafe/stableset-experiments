@@ -35,7 +35,6 @@ impl Debug for Msg {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Membership {
     pub stable_set: StableSet,
-    pub joining_state: Option<(u64, SigSet<(u64, Id)>)>,
 }
 
 impl Membership {
@@ -56,15 +55,11 @@ impl Membership {
 
         assert_eq!(&BTreeSet::from_iter(stable_set.ids()), genesis);
 
-        Self {
-            stable_set,
-            joining_state: None,
-        }
+        Self { stable_set }
     }
 
     fn build_msg(&self, action: Action) -> Msg {
         let mut stable_set = self.stable_set.clone();
-        stable_set.joining_members.clear();
         Msg { stable_set, action }
     }
 
@@ -76,12 +71,12 @@ impl Membership {
         self.stable_set.contains(id)
     }
 
-    pub fn members(&self) -> impl Iterator<Item = Member> {
+    pub fn members(&self) -> BTreeSet<Member> {
         self.stable_set.members()
     }
 
     pub fn elders(&self) -> Elders {
-        BTreeSet::from_iter(self.members().take(ELDER_COUNT).map(|m| m.id))
+        BTreeSet::from_iter(self.members().into_iter().take(ELDER_COUNT).map(|m| m.id))
     }
 
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
@@ -90,12 +85,21 @@ impl Membership {
             self.handle_join_share(id, elders, member, src, o);
         }
 
+        for member in stable_set.joining() {
+            self.handle_join_share(id, elders, member, src, o);
+        }
+
+        for member in stable_set.leaving() {
+            self.handle_leave_share(id, elders, member, src, o);
+        }
+
         match action {
             Action::ReqJoin(candidate_id) => {
-                if !self.stable_set.has_seen(candidate_id) && elders.contains(&id) {
+                if !self.stable_set.member_by_id(candidate_id).is_some() && elders.contains(&id) {
                     let latest_ord_idx = self
                         .stable_set
                         .members()
+                        .iter()
                         .map(|m| m.ord_idx)
                         .max()
                         .unwrap_or(0);
@@ -117,7 +121,7 @@ impl Membership {
 
         let mut should_send_sync = false;
         for member in self.stable_set.members() {
-            if !stable_set.has_member(&member) {
+            if !stable_set.is_member(&member) {
                 should_send_sync = true;
             }
         }
@@ -135,11 +139,11 @@ impl Membership {
         witness: Id,
         o: &mut Out<Node>,
     ) {
-        if self.stable_set.has_seen(member.id) {
+        if self.stable_set.is_member(&member) {
             return;
         }
 
-        let first_time_seeing_member = self.stable_set.witnesses(&member).is_empty();
+        let first_time_seeing_join = self.stable_set.joining_witnesses(&member).is_empty();
 
         self.stable_set.add(member.clone(), witness);
         self.stable_set.add(member.clone(), id);
@@ -150,7 +154,38 @@ impl Membership {
                 &self.build_msg(Action::Nop).into(),
             );
             // o.send(member.id, self.build_msg(Action::Nop).into());
-        } else if first_time_seeing_member && member.id != id {
+        } else if first_time_seeing_join && member.id != id {
+            o.broadcast(
+                BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
+                &self.build_msg(Action::JoinShare(member.clone())).into(),
+            );
+        }
+    }
+
+    fn handle_leave_share(
+        &mut self,
+        id: Id,
+        elders: &Elders,
+        member: Member,
+        witness: Id,
+        o: &mut Out<Node>,
+    ) {
+        if !self.stable_set.is_member(&member) {
+            return;
+        }
+
+        let first_time_seeing_leave = self.stable_set.leaving_witnesses(&member).is_empty();
+
+        self.stable_set.remove(member.clone(), witness);
+        self.stable_set.remove(member.clone(), id);
+
+        if self.stable_set.process_ready_actions(elders) && elders.contains(&id) {
+            o.broadcast(
+                &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
+                &self.build_msg(Action::Nop).into(),
+            );
+            // o.send(member.id, self.build_msg(Action::Nop).into());
+        } else if first_time_seeing_leave && member.id != id {
             o.broadcast(
                 BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
                 &self.build_msg(Action::JoinShare(member.clone())).into(),

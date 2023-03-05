@@ -55,7 +55,6 @@ impl From<membership::Msg> for Msg {
     }
 }
 
-
 impl From<ledger::Msg> for Msg {
     fn from(msg: ledger::Msg) -> Self {
         Self::Wallet(msg)
@@ -78,10 +77,7 @@ impl Actor for Node {
         //     o.send(id, Msg::StartReissue);
         // }
 
-        State {
-            membership,
-            wallet,
-        }
+        State { membership, wallet }
     }
 
     fn on_msg(
@@ -135,7 +131,7 @@ fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
         .actor_states
         .iter()
         .all(|actor| actor.membership.stable_set == reference_stable_set)
-        && reference_stable_set.ids().count() == reference_stable_set.members().count()
+        && reference_stable_set.ids().count() == reference_stable_set.members().len()
 }
 
 fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
@@ -151,7 +147,6 @@ fn prop_unspent_outputs_equals_genesis_amount(state: &ActorModelState<Node, Vec<
         actor.wallet.ledger.genesis_amount() == actor.wallet.ledger.sum_unspent_outputs()
     })
 }
-
 
 impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
@@ -190,14 +185,13 @@ impl ModelCfg {
                     concurrent_txs.len() <= 1
                 },
             )
-
     }
 }
 
 fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    let network = Network::new_unordered_nonduplicating([]);
+    let network = Network::new_unordered_duplicating([]);
 
     ModelCfg {
         elder_count: 1,

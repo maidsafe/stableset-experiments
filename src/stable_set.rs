@@ -24,7 +24,7 @@ impl std::fmt::Debug for Member {
 )]
 pub struct StableSet {
     members: BTreeSet<Member>,
-    dead: BTreeSet<Id>,
+    // dead: BTreeSet<Id>,
     pub joining_members: BTreeMap<Member, BTreeSet<Id>>,
     pub leaving_members: BTreeMap<Member, BTreeSet<Id>>,
 }
@@ -40,22 +40,6 @@ impl Debug for StableSet {
 }
 
 impl StableSet {
-    pub fn merge(&mut self, witness: Id, other: StableSet, elders: &Elders) {
-        for member in other.members {
-            if self.has_seen(member.id) {
-                continue;
-            }
-
-            self.joining_members
-                .entry(member)
-                .or_default()
-                .insert(witness);
-        }
-
-        self.process_ready_actions(elders);
-        // TODO: merge with the dead nodes as well (needs the same flow as the joining nodes)
-    }
-
     pub fn process_ready_actions(&mut self, elders: &Elders) -> bool {
         let mut updated = false;
 
@@ -74,7 +58,7 @@ impl StableSet {
         for member in ready_to_join {
             self.joining_members.remove(&member);
 
-            if let Some(existing_member_with_id) = self.members().find(|m| m.id == member.id) {
+            if let Some(existing_member_with_id) = self.member_by_id(member.id) {
                 if existing_member_with_id.ord_idx >= member.ord_idx {
                     continue;
                 } else {
@@ -99,17 +83,13 @@ impl StableSet {
 
         for member in ready_to_leave {
             self.leaving_members.remove(&member);
-
-            if let Some(existing_member_with_id) = self.members().find(|m| m.id == member.id) {
-                self.members.remove(&existing_member_with_id);
-            }
         }
 
         updated
     }
 
     pub fn add(&mut self, member: Member, witness: Id) -> bool {
-        if !self.has_seen(member.id) {
+        if !self.is_member(&member) {
             self.joining_members
                 .entry(member)
                 .or_default()
@@ -119,24 +99,36 @@ impl StableSet {
         }
     }
 
-    pub fn witnesses(&mut self, member: &Member) -> BTreeSet<Id> {
+    pub fn remove(&mut self, member: Member, witness: Id) -> bool {
+        if self.is_member(&member) {
+            self.leaving_members
+                .entry(member)
+                .or_default()
+                .insert(witness)
+        } else {
+            false
+        }
+    }
+
+    pub fn joining_witnesses(&mut self, member: &Member) -> BTreeSet<Id> {
         self.joining_members
             .get(member)
             .cloned()
             .unwrap_or_default()
     }
 
-    pub fn remove(&mut self, id: Id) {
-        self.dead.insert(id);
-
-        let to_be_removed = Vec::from_iter(self.members.iter().filter(|m| m.id == id).cloned());
-
-        for member in to_be_removed {
-            self.members.remove(&member);
-        }
+    pub fn leaving_witnesses(&mut self, member: &Member) -> BTreeSet<Id> {
+        self.leaving_members
+            .get(member)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    pub fn has_member(&self, member: &Member) -> bool {
+    pub fn member_by_id(&self, id: Id) -> Option<Member> {
+        self.members.iter().find(|m| m.id == id).cloned()
+    }
+
+    pub fn is_member(&self, member: &Member) -> bool {
         self.members.contains(member)
     }
 
@@ -148,11 +140,15 @@ impl StableSet {
         self.members.iter().map(|m| m.id)
     }
 
-    pub fn members(&self) -> impl Iterator<Item = Member> {
-        self.members.clone().into_iter()
+    pub fn members(&self) -> BTreeSet<Member> {
+        self.members.clone()
     }
 
-    pub(crate) fn has_seen(&self, id: Id) -> bool {
-        self.dead.contains(&id) || self.contains(id)
+    pub fn leaving(&self) -> impl Iterator<Item = Member> + '_ {
+        self.leaving_members.keys().cloned()
+    }
+
+    pub fn joining(&self) -> impl Iterator<Item = Member> + '_ {
+        self.joining_members.keys().cloned()
     }
 }
