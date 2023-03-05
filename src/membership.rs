@@ -13,6 +13,7 @@ pub type Elders = BTreeSet<Id>;
 )]
 pub enum Action {
     ReqJoin(Id),
+    ReqLeave(Id),
     JoinShare(Member),
     Nop,
 }
@@ -64,6 +65,10 @@ impl Membership {
         self.build_msg(Action::ReqJoin(id))
     }
 
+    pub fn req_leave(&self, id: Id) -> Msg {
+        self.build_msg(Action::ReqJoin(id))
+    }
+
     pub fn is_member(&self, id: Id) -> bool {
         self.stable_set.contains(id)
     }
@@ -108,6 +113,12 @@ impl Membership {
                     };
 
                     self.handle_join_share(id, elders, member, id, o);
+                }
+            }
+            Action::ReqLeave(to_remove) => {
+                if let Some(member) = self.stable_set.member_by_id(to_remove) {
+                    self.handle_leave_share(id, elders, member.clone(), id, o);
+                    self.handle_leave_share(id, elders, member, src, o);
                 }
             }
             Action::JoinShare(member) => {
@@ -188,5 +199,9 @@ impl Membership {
                 &self.build_msg(Action::JoinShare(member.clone())).into(),
             );
         }
+    }
+
+    pub(crate) fn is_leaving(&self, id: Id) -> bool {
+        self.stable_set.leaving().any(|m| m.id == id)
     }
 }

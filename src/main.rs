@@ -37,6 +37,7 @@ pub enum Msg {
     Membership(membership::Msg),
     // Wallet(ledger::Msg),
     StartReissue,
+    TriggerLeave,
 }
 
 impl Debug for Msg {
@@ -45,6 +46,7 @@ impl Debug for Msg {
             Msg::Membership(m) => write!(f, "{m:?}"),
             // Msg::Wallet(m) => write!(f, "{m:?}"),
             Msg::StartReissue => write!(f, "StartReissue"),
+            Msg::TriggerLeave => write!(f, "TriggerLeave"),
         }
     }
 }
@@ -90,17 +92,22 @@ impl Actor for Node {
         msg: Self::Msg,
         o: &mut Out<Self>,
     ) {
+        let elders = state.elders();
         match msg {
             Msg::Membership(msg) => {
-                let elders = state.elders();
                 state.to_mut().membership.on_msg(&elders, id, src, msg, o);
+
+                if id > Id::from(self.peers.len() / 2)
+                    && state.membership.is_member(id)
+                    && !state.membership.is_leaving(id)
+                {
+                    o.send(id, Msg::TriggerLeave);
+                }
             }
             // Msg::Wallet(msg) => {
-            //     let elders = state.elders();
             //     state.to_mut().wallet.on_msg(&elders, id, src, msg, o)
             // }
             Msg::StartReissue => {
-                //     let elders = state.elders();
                 //     let input = state.wallet.ledger.genesis_dbc.clone();
 
                 //     let reissue_amount = (0..self.peers.len() + 1)
@@ -114,6 +121,9 @@ impl Actor for Node {
                 //         vec![reissue_amount, difference],
                 //         o,
                 //     );
+            }
+            Msg::TriggerLeave => {
+                o.broadcast(&elders, &state.membership.req_leave(id).into());
             }
         }
     }
@@ -198,7 +208,7 @@ fn main() {
 
     ModelCfg {
         elder_count: 1,
-        server_count: 4,
+        server_count: 3,
         network,
     }
     .into_model()
