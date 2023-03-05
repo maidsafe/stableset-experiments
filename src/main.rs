@@ -1,12 +1,10 @@
 mod fake_crypto;
-mod handover;
 mod ledger;
 mod membership;
 mod stable_set;
 
 use std::{borrow::Cow, collections::BTreeSet, fmt::Debug};
 
-use handover::Handover;
 use ledger::Wallet;
 use membership::Membership;
 use stateright::{
@@ -18,14 +16,13 @@ const ELDER_COUNT: usize = 3;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
-    pub handover: Handover,
     pub membership: Membership,
     pub wallet: Wallet,
 }
 
 impl State {
-    fn elder_candidates(&self) -> BTreeSet<Id> {
-        self.membership.elder_candidates()
+    fn elders(&self) -> BTreeSet<Id> {
+        self.membership.elders()
     }
 }
 
@@ -38,7 +35,6 @@ pub struct Node {
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Msg {
     Membership(membership::Msg),
-    Handover(handover::Msg),
     Wallet(ledger::Msg),
     StartReissue,
 }
@@ -47,7 +43,6 @@ impl Debug for Msg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Msg::Membership(m) => write!(f, "{m:?}"),
-            Msg::Handover(m) => write!(f, "{m:?}"),
             Msg::Wallet(m) => write!(f, "{m:?}"),
             Msg::StartReissue => write!(f, "StartReissue"),
         }
@@ -60,11 +55,6 @@ impl From<membership::Msg> for Msg {
     }
 }
 
-impl From<handover::Msg> for Msg {
-    fn from(msg: handover::Msg) -> Self {
-        Self::Handover(msg)
-    }
-}
 
 impl From<ledger::Msg> for Msg {
     fn from(msg: ledger::Msg) -> Self {
@@ -78,7 +68,6 @@ impl Actor for Node {
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         let membership = Membership::new(&self.genesis_nodes);
-        let handover = Handover::new(self.genesis_nodes.clone());
         let wallet = Wallet::new(&self.genesis_nodes);
 
         if !self.genesis_nodes.contains(&id) {
@@ -90,7 +79,6 @@ impl Actor for Node {
         // }
 
         State {
-            handover,
             membership,
             wallet,
         }
@@ -106,22 +94,15 @@ impl Actor for Node {
     ) {
         match msg {
             Msg::Membership(msg) => {
-                let elders = state.elder_candidates();
+                let elders = state.elders();
                 state.to_mut().membership.on_msg(&elders, id, src, msg, o);
             }
-            Msg::Handover(msg) => {
-                let elder_candidates = state.elder_candidates();
-                state
-                    .to_mut()
-                    .handover
-                    .on_msg(elder_candidates, id, src, msg, o)
-            }
             Msg::Wallet(msg) => {
-                let elders = state.elder_candidates();
+                let elders = state.elders();
                 state.to_mut().wallet.on_msg(&elders, id, src, msg, o)
             }
             Msg::StartReissue => {
-                let elders = state.elder_candidates();
+                let elders = state.elders();
                 let input = state.wallet.ledger.genesis_dbc.clone();
 
                 let reissue_amount = (0..self.peers.len() + 1)
@@ -137,12 +118,6 @@ impl Actor for Node {
                 );
             }
         }
-
-        // let elder_candidates = state.elder_candidates();
-        // state
-        //     .to_mut()
-        //     .handover
-        //     .try_trigger_handover(id, elder_candidates, o)
     }
 }
 
@@ -177,23 +152,6 @@ fn prop_unspent_outputs_equals_genesis_amount(state: &ActorModelState<Node, Vec<
     })
 }
 
-// fn prop_oldest_nodes_are_elders(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-//     state
-//         .actor_states
-//         .iter()
-//         .all(|actor| actor.handover.elders() == actor.elder_candidates())
-// }
-
-// fn prop_nodes_agree_on_sap_chain(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-//     let common_chain: Vec<(Elders, SectionSig<(usize, Elders)>)> = vec![];
-
-//     for actor in state.actor_states.iter() {}
-
-//     state
-//         .actor_states
-//         .iter()
-//         .all(|actor| actor.handover.elders() == actor.elder_candidates())
-// }
 
 impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
@@ -232,15 +190,7 @@ impl ModelCfg {
                     concurrent_txs.len() <= 1
                 },
             )
-        // .property(
-        //     Expectation::Eventually,
-        //     "the most stable nodes of the final stable set are elders",
-        //     |_, state| {
-        //         prop_stable_set_converged(state)
-        //             && prop_all_nodes_joined(state)
-        //             && prop_oldest_nodes_are_elders(state)
-        //     },
-        // )
+
     }
 }
 
@@ -251,7 +201,7 @@ fn main() {
 
     ModelCfg {
         elder_count: 1,
-        server_count: 5,
+        server_count: 4,
         network,
     }
     .into_model()

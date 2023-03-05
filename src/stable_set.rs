@@ -5,7 +5,7 @@ use std::{
 
 use stateright::actor::Id;
 
-use crate::{fake_crypto::supermajority, handover::Elders};
+use crate::{fake_crypto::majority, membership::Elders};
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
@@ -63,7 +63,7 @@ impl StableSet {
             self.joining_members
                 .iter()
                 .filter(|(_, witnesses)| {
-                    supermajority(witnesses.intersection(elders).count(), elders.len())
+                    majority(witnesses.intersection(elders).count(), elders.len())
                 })
                 .map(|(member, _)| member)
                 .cloned(),
@@ -89,7 +89,7 @@ impl StableSet {
             self.leaving_members
                 .iter()
                 .filter(|(_, witnesses)| {
-                    supermajority(witnesses.intersection(elders).count(), elders.len())
+                    majority(witnesses.intersection(elders).count(), elders.len())
                 })
                 .map(|(member, _)| member)
                 .cloned(),
