@@ -1,12 +1,9 @@
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 
 use stateright::actor::{Id, Out};
 
-use crate::fake_crypto::SigSet;
-use crate::stable_set::StableSet;
-use crate::{fake_crypto::Sig, stable_set::Member};
+use crate::stable_set::{Member, StableSet};
 use crate::{Node, ELDER_COUNT};
 
 pub type Elders = BTreeSet<Id>;
@@ -59,7 +56,7 @@ impl Membership {
     }
 
     fn build_msg(&self, action: Action) -> Msg {
-        let mut stable_set = self.stable_set.clone();
+        let stable_set = self.stable_set.clone();
         Msg { stable_set, action }
     }
 
@@ -95,7 +92,7 @@ impl Membership {
 
         match action {
             Action::ReqJoin(candidate_id) => {
-                if !self.stable_set.member_by_id(candidate_id).is_some() && elders.contains(&id) {
+                if self.stable_set.member_by_id(candidate_id).is_none() && elders.contains(&id) {
                     let latest_ord_idx = self
                         .stable_set
                         .members()

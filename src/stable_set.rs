@@ -5,7 +5,11 @@ use std::{
 
 use stateright::actor::Id;
 
-use crate::{fake_crypto::majority, membership::Elders};
+use crate::membership::Elders;
+
+pub fn majority(m: usize, n: usize) -> bool {
+    m > n / 2
+}
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
@@ -15,7 +19,7 @@ pub struct Member {
 
 impl std::fmt::Debug for Member {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "M({}.{:?})", self.ord_idx, self.id)
+        write!(f, "{}:{:?}", self.ord_idx, self.id)
     }
 }
 
@@ -33,8 +37,8 @@ impl Debug for StableSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "SS({:?}, joining:{:?})",
-            self.members, self.joining_members
+            "SS({:?}, joining:{:?}, leaving:{:?})",
+            self.members, self.joining_members, self.leaving_members
         )
     }
 }
