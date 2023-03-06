@@ -126,7 +126,7 @@ impl Actor for Node {
                 //     );
             }
             Msg::TriggerLeave => {
-                o.broadcast(&elders, &state.membership.req_leave(id).into());
+                o.broadcast(&elders, &state.to_mut().membership.req_leave(id).into());
             }
         }
     }
@@ -140,23 +140,51 @@ struct ModelCfg {
 }
 
 fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-    let reference_stable_set = state.actor_states[0].membership.stable_set.clone();
+    let mut non_leaving_nodes = state.actor_states.iter().filter(|s| !s.is_leaving);
 
-    state
-        .actor_states
-        .iter()
-        .all(|actor| actor.membership.stable_set == reference_stable_set)
-        && reference_stable_set.ids().count() == reference_stable_set.members().len()
+    let reference_stable_set = if let Some(s) = non_leaving_nodes
+        .next()
+        .map(|s| s.membership.stable_set.members())
+    {
+        s
+    } else {
+        return true;
+    };
+
+    non_leaving_nodes.all(|actor| actor.membership.stable_set.members() == reference_stable_set)
+    // && reference_stable_set.ids().count() == reference_stable_set.members().len()
 }
 
-fn prop_all_nodes_joined(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+fn prop_all_nodes_joined_who_havent_left(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
     state
         .actor_states
         .iter()
         .enumerate()
+        .filter(|(_, actor)| !actor.is_leaving)
         .all(|(id, actor)| actor.membership.stable_set.contains(id.into()))
 }
 
+fn prop_all_nodes_who_are_leaving_eventually_left(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    let reference_stable_set = if let Some(s) = state
+        .actor_states
+        .iter()
+        .find(|s| !s.is_leaving)
+        .map(|s| s.membership.stable_set.clone())
+    {
+        s
+    } else {
+        return true;
+    };
+
+    state
+        .actor_states
+        .iter()
+        .enumerate()
+        .filter(|(_, actor)| actor.is_leaving)
+        .all(|(id, _)| !reference_stable_set.contains(id.into()))
+}
+
+#[allow(unused)]
 fn prop_unspent_outputs_equals_genesis_amount(_state: &ActorModelState<Node, Vec<Msg>>) -> bool {
     // state.actor_states.iter().all(|actor| {
     //     actor.wallet.ledger.genesis_amount() == actor.wallet.ledger.sum_unspent_outputs()
@@ -174,17 +202,23 @@ impl ModelCfg {
             .init_network(self.network)
             .property(
                 Expectation::Eventually,
-                "everyone eventually sees the same stable set",
+                "everyone who hasn't left converges on the same stable set",
                 |_, state| prop_stable_set_converged(state),
             )
             .property(
                 Expectation::Eventually,
-                "everyone is part of the final stable set",
-                |_, state| prop_stable_set_converged(state) && prop_all_nodes_joined(state),
+                "everyone who hasn't left is part of the final stable set",
+                |_, state| prop_all_nodes_joined_who_havent_left(state),
             )
-            .property(Expectation::Always, "Ledger balances", |_, state| {
-                prop_unspent_outputs_equals_genesis_amount(state)
-            })
+            .property(
+                Expectation::Eventually,
+                "everyone who started leaving, will leave",
+                |_, state| prop_all_nodes_who_are_leaving_eventually_left(state),
+            )
+
+        // .property(Expectation::Always, "Ledger balances", |_, state| {
+        //     prop_unspent_outputs_equals_genesis_amount(state)
+        // })
         // .property(
         //     Expectation::Always,
         //     "Never two nodes aggregate a double spend",

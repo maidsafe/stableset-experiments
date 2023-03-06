@@ -87,6 +87,7 @@ impl StableSet {
 
         for member in ready_to_leave {
             self.leaving_members.remove(&member);
+            self.members.remove(&member);
         }
 
         updated
@@ -126,6 +127,10 @@ impl StableSet {
             .get(member)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn is_leaving(&mut self, member: &Member) -> bool {
+        self.leaving_members.contains_key(member)
     }
 
     pub fn member_by_id(&self, id: Id) -> Option<Member> {

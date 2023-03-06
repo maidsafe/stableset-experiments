@@ -15,7 +15,7 @@ pub enum Action {
     ReqJoin(Id),
     ReqLeave(Id),
     JoinShare(Member),
-    Nop,
+    Sync,
 }
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
@@ -65,8 +65,11 @@ impl Membership {
         self.build_msg(Action::ReqJoin(id))
     }
 
-    pub fn req_leave(&self, id: Id) -> Msg {
-        self.build_msg(Action::ReqJoin(id))
+    pub fn req_leave(&mut self, id: Id) -> Msg {
+        if let Some(member) = self.stable_set.member_by_id(id) {
+            self.handle_leave_share(id, member, id);
+        }
+        self.build_msg(Action::ReqLeave(id))
     }
 
     pub fn is_member(&self, id: Id) -> bool {
@@ -83,16 +86,41 @@ impl Membership {
 
     pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
         let Msg { stable_set, action } = msg;
+        let mut additional_members_to_sync = BTreeSet::new();
+
         for member in stable_set.members() {
-            self.handle_join_share(id, elders, member, src, o);
+            let m_id = member.id;
+
+            if self.handle_join_share(id, member, src) {
+                additional_members_to_sync.insert(m_id);
+            }
         }
 
         for member in stable_set.joining() {
-            self.handle_join_share(id, elders, member, src, o);
+            let m_id = member.id;
+            if self.handle_join_share(id, member, src) {
+                additional_members_to_sync.insert(m_id);
+            }
         }
 
         for member in stable_set.leaving() {
-            self.handle_leave_share(id, elders, member, src, o);
+            let m_id = member.id;
+            if self.handle_leave_share(id, member, src) {
+                additional_members_to_sync.insert(m_id);
+            }
+        }
+
+        // For each member we know is leaving, check if the other node has already removed it.
+        let to_handle = Vec::from_iter(
+            self.stable_set
+                .leaving()
+                .filter(|m| !stable_set.is_member(m)),
+        );
+        for member in to_handle {
+            let m_id = member.id;
+            if self.handle_leave_share(id, member, src) {
+                additional_members_to_sync.insert(m_id);
+            }
         }
 
         match action {
@@ -112,92 +140,62 @@ impl Membership {
                         ord_idx,
                     };
 
-                    self.handle_join_share(id, elders, member, id, o);
+                    if self.handle_join_share(id, member, id) {
+                        additional_members_to_sync.insert(candidate_id);
+                    }
                 }
             }
             Action::ReqLeave(to_remove) => {
                 if let Some(member) = self.stable_set.member_by_id(to_remove) {
-                    self.handle_leave_share(id, elders, member.clone(), id, o);
-                    self.handle_leave_share(id, elders, member, src, o);
+                    if self.handle_leave_share(id, member, src) {
+                        additional_members_to_sync.insert(to_remove);
+                    }
                 }
             }
             Action::JoinShare(member) => {
-                self.handle_join_share(id, elders, member, src, o);
+                let m_id = member.id;
+                if self.handle_join_share(id, member, src) {
+                    additional_members_to_sync.insert(m_id);
+                }
             }
-            Action::Nop => {}
+            Action::Sync => {}
         }
 
-        let mut should_send_sync = false;
-        for member in self.stable_set.members() {
-            if !stable_set.is_member(&member) {
-                should_send_sync = true;
-            }
+        let stable_set_changed = self.stable_set.process_ready_actions(elders);
+
+        if stable_set_changed && elders.contains(&id) {
+            o.broadcast(
+                &Vec::from_iter(
+                    self.stable_set
+                        .ids()
+                        .filter(|e| e != &id)
+                        .filter(|e| !additional_members_to_sync.contains(e)),
+                ),
+                &self.build_msg(Action::Sync).into(),
+            );
         }
 
-        if should_send_sync {
-            o.send(src, self.build_msg(Action::Nop).into());
-        }
+        o.broadcast(
+            additional_members_to_sync.iter().filter(|m| **m != id),
+            &self.build_msg(Action::Sync).into(),
+        );
     }
 
-    fn handle_join_share(
-        &mut self,
-        id: Id,
-        elders: &Elders,
-        member: Member,
-        witness: Id,
-        o: &mut Out<Node>,
-    ) {
-        if self.stable_set.is_member(&member) {
-            return;
-        }
+    fn handle_join_share(&mut self, id: Id, member: Member, witness: Id) -> bool {
+        let mut first_time_seeing_join = self.stable_set.joining_witnesses(&member).is_empty();
 
-        let first_time_seeing_join = self.stable_set.joining_witnesses(&member).is_empty();
+        first_time_seeing_join &= self.stable_set.add(member.clone(), witness);
+        self.stable_set.add(member, id);
 
-        self.stable_set.add(member.clone(), witness);
-        self.stable_set.add(member.clone(), id);
-
-        if self.stable_set.process_ready_actions(elders) && elders.contains(&id) {
-            o.broadcast(
-                &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
-                &self.build_msg(Action::Nop).into(),
-            );
-            // o.send(member.id, self.build_msg(Action::Nop).into());
-        } else if first_time_seeing_join && member.id != id {
-            o.broadcast(
-                BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
-                &self.build_msg(Action::JoinShare(member.clone())).into(),
-            );
-        }
+        first_time_seeing_join
     }
 
-    fn handle_leave_share(
-        &mut self,
-        id: Id,
-        elders: &Elders,
-        member: Member,
-        witness: Id,
-        o: &mut Out<Node>,
-    ) {
-        if !self.stable_set.is_member(&member) {
-            return;
-        }
+    fn handle_leave_share(&mut self, id: Id, member: Member, witness: Id) -> bool {
+        let mut first_time_seeing_leave = self.stable_set.leaving_witnesses(&member).is_empty();
 
-        let first_time_seeing_leave = self.stable_set.leaving_witnesses(&member).is_empty();
+        first_time_seeing_leave &= self.stable_set.remove(member.clone(), witness);
+        self.stable_set.remove(member, id);
 
-        self.stable_set.remove(member.clone(), witness);
-        self.stable_set.remove(member.clone(), id);
-
-        if self.stable_set.process_ready_actions(elders) && elders.contains(&id) {
-            o.broadcast(
-                &Vec::from_iter(self.stable_set.ids().filter(|e| e != &id)),
-                &self.build_msg(Action::Nop).into(),
-            );
-            // o.send(member.id, self.build_msg(Action::Nop).into());
-        } else if first_time_seeing_leave && member.id != id {
-            o.broadcast(
-                BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
-                &self.build_msg(Action::Nop).into(),
-            );
-        }
+        first_time_seeing_leave
     }
 }
