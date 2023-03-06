@@ -196,7 +196,7 @@ impl Membership {
         } else if first_time_seeing_leave && member.id != id {
             o.broadcast(
                 BTreeSet::from_iter(elders.iter().filter(|e| e != &&id).chain([&member.id])),
-                &self.build_msg(Action::JoinShare(member.clone())).into(),
+                &self.build_msg(Action::Nop).into(),
             );
         }
     }
