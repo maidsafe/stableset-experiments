@@ -6,7 +6,7 @@ use std::{
 use stateright::actor::Id;
 
 pub fn majority(m: usize, n: usize) -> bool {
-    m > n / 2
+    3 * m > 2 * n
 }
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]

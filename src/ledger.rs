@@ -4,7 +4,7 @@ use stateright::actor::{Id, Out};
 
 use crate::{
     fake_crypto::{SectionSig, Sig, SigSet},
-    membership::Elders,
+    membership::{Elders, Membership},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -20,6 +20,15 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    fn build_msg(&self, membership: &Membership, msg: Msg) -> crate::Msg {
+        let stable_set = membership.stable_set.clone();
+
+        crate::Msg {
+            stable_set,
+            action: msg.into(),
+        }
+    }
+
     pub fn new(elders: &Elders) -> Self {
         Self {
             ledger: Ledger::new(elders),
@@ -29,7 +38,7 @@ impl Wallet {
 
     pub fn reissue(
         &mut self,
-        elders: &Elders,
+        membership: &Membership,
         inputs: Vec<Dbc>,
         outputs: Vec<u64>,
         o: &mut Out<crate::Node>,
@@ -37,21 +46,35 @@ impl Wallet {
         let tx = Tx { inputs, outputs };
         self.pending_tx = Some((tx.clone(), SigSet::new()));
 
-        o.broadcast(elders, &Msg::ReqReissue(tx).into())
+        o.broadcast(
+            &membership.elders(),
+            &self.build_msg(membership, Msg::ReqReissue(tx)),
+        )
     }
 
-    pub fn on_msg(&mut self, elders: &Elders, id: Id, src: Id, msg: Msg, o: &mut Out<crate::Node>) {
+    pub fn on_msg(
+        &mut self,
+        membership: &Membership,
+        id: Id,
+        src: Id,
+        msg: Msg,
+        o: &mut Out<crate::Node>,
+    ) {
         // If we have a pending transaction and the elders changed, we need to restart the reissue
+        let elders = membership.elders();
 
         if let Some((tx, sig)) = self.pending_tx.as_ref() {
-            self.reissue(elders, tx.inputs.clone(), tx.outputs.clone(), o);
+            self.reissue(membership, tx.inputs.clone(), tx.outputs.clone(), o);
         }
 
         match msg {
             Msg::ReqReissue(tx) => {
                 if elders.contains(&id) {
-                    if let Some(sig_share) = self.ledger.tx_share(id, elders, tx.clone()) {
-                        o.send(src, Msg::ReissueShare(tx, sig_share).into())
+                    if let Some(sig_share) = self.ledger.tx_share(id, &elders, tx.clone()) {
+                        o.send(
+                            src,
+                            self.build_msg(membership, Msg::ReissueShare(tx, sig_share).into()),
+                        )
                     }
                 }
             }

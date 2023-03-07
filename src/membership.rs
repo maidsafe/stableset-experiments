@@ -11,23 +11,10 @@ pub type Elders = BTreeSet<Id>;
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-pub enum Action {
+pub enum Msg {
     ReqJoin(Id),
     ReqLeave(Id),
     JoinShare(Member),
-    Sync,
-}
-
-#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
-pub struct Msg {
-    stable_set: StableSet,
-    action: Action,
-}
-
-impl Debug for Msg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Msg({:?}, {:?})", self.stable_set, self.action)
-    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -56,20 +43,23 @@ impl Membership {
         Self { stable_set }
     }
 
-    fn build_msg(&self, action: Action) -> Msg {
+    fn build_msg(&self, msg: Msg) -> crate::Msg {
         let stable_set = self.stable_set.clone();
-        Msg { stable_set, action }
+        crate::Msg {
+            stable_set,
+            action: msg.into(),
+        }
     }
 
-    pub fn req_join(&self, id: Id) -> Msg {
-        self.build_msg(Action::ReqJoin(id))
+    pub fn req_join(&self, id: Id) -> crate::Msg {
+        self.build_msg(Msg::ReqJoin(id))
     }
 
-    pub fn req_leave(&mut self, id: Id) -> Msg {
+    pub fn req_leave(&mut self, id: Id) -> crate::Msg {
         if let Some(member) = self.stable_set.member_by_id(id) {
             self.handle_leave_share(id, member, id);
         }
-        self.build_msg(Action::ReqLeave(id))
+        self.build_msg(Msg::ReqLeave(id))
     }
 
     pub fn is_member(&self, id: Id) -> bool {
@@ -84,8 +74,7 @@ impl Membership {
         BTreeSet::from_iter(self.members().into_iter().take(ELDER_COUNT).map(|m| m.id))
     }
 
-    pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg, o: &mut Out<Node>) {
-        let Msg { stable_set, action } = msg;
+    pub fn merge(&mut self, stable_set: StableSet, id: Id, src: Id) -> BTreeSet<Id> {
         let mut additional_members_to_sync = BTreeSet::new();
 
         for member in stable_set.members() {
@@ -123,8 +112,20 @@ impl Membership {
             }
         }
 
-        match action {
-            Action::ReqJoin(candidate_id) => {
+        additional_members_to_sync
+    }
+
+    pub fn on_msg(
+        &mut self,
+        elders: &BTreeSet<Id>,
+        id: Id,
+        src: Id,
+        msg: Msg,
+        o: &mut Out<Node>,
+    ) -> BTreeSet<Id> {
+        let mut additional_members_to_sync = BTreeSet::new();
+        match msg {
+            Msg::ReqJoin(candidate_id) => {
                 if self.stable_set.member_by_id(candidate_id).is_none() && elders.contains(&id) {
                     let latest_ord_idx = self
                         .stable_set
@@ -145,40 +146,33 @@ impl Membership {
                     }
                 }
             }
-            Action::ReqLeave(to_remove) => {
+            Msg::ReqLeave(to_remove) => {
                 if let Some(member) = self.stable_set.member_by_id(to_remove) {
                     if self.handle_leave_share(id, member, src) {
                         additional_members_to_sync.insert(to_remove);
                     }
                 }
             }
-            Action::JoinShare(member) => {
+            Msg::JoinShare(member) => {
                 let m_id = member.id;
                 if self.handle_join_share(id, member, src) {
                     additional_members_to_sync.insert(m_id);
                 }
             }
-            Action::Sync => {}
         }
+        additional_members_to_sync
+    }
 
-        let stable_set_changed = self.stable_set.process_ready_actions(elders);
+    pub fn process_pending_actions(&mut self, id: Id) -> BTreeSet<Id> {
+        let elders = self.elders();
+
+        let stable_set_changed = self.stable_set.process_ready_actions(&elders);
 
         if stable_set_changed && elders.contains(&id) {
-            o.broadcast(
-                &Vec::from_iter(
-                    self.stable_set
-                        .ids()
-                        .filter(|e| e != &id)
-                        .filter(|e| !additional_members_to_sync.contains(e)),
-                ),
-                &self.build_msg(Action::Sync).into(),
-            );
+            self.stable_set.ids().filter(|e| e != &id).collect()
+        } else {
+            Default::default()
         }
-
-        o.broadcast(
-            additional_members_to_sync.iter().filter(|m| **m != id),
-            &self.build_msg(Action::Sync).into(),
-        );
     }
 
     fn handle_join_share(&mut self, id: Id, member: Member, witness: Id) -> bool {

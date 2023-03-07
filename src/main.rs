@@ -7,6 +7,7 @@ use std::{borrow::Cow, collections::BTreeSet, fmt::Debug};
 
 use ledger::Wallet;
 use membership::Membership;
+use stable_set::StableSet;
 use stateright::{
     actor::{model_peers, Actor, ActorModel, ActorModelState, Id, Network, Out},
     Expectation, Model,
@@ -25,6 +26,11 @@ impl State {
     fn elders(&self) -> BTreeSet<Id> {
         self.membership.elders()
     }
+
+    fn build_msg(&self, action: Action) -> Msg {
+        let stable_set = self.membership.stable_set.clone();
+        Msg { stable_set, action }
+    }
 }
 
 #[derive(Clone)]
@@ -34,31 +40,45 @@ pub struct Node {
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
-pub enum Msg {
-    Membership(membership::Msg),
-    Wallet(ledger::Msg),
-    StartReissue,
-    TriggerLeave,
+pub struct Msg {
+    stable_set: StableSet,
+    action: Action,
 }
 
 impl Debug for Msg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Msg({:?}, {:?})", self.stable_set, self.action)
+    }
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub enum Action {
+    Membership(membership::Msg),
+    Wallet(ledger::Msg),
+    Sync,
+    StartReissue,
+    TriggerLeave,
+}
+
+impl Debug for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Msg::Membership(m) => write!(f, "{m:?}"),
-            Msg::Wallet(m) => write!(f, "{m:?}"),
-            Msg::StartReissue => write!(f, "StartReissue"),
-            Msg::TriggerLeave => write!(f, "TriggerLeave"),
+            Self::Membership(m) => write!(f, "{m:?}"),
+            Self::Wallet(m) => write!(f, "{m:?}"),
+            Self::Sync => write!(f, "Sync"),
+            Self::StartReissue => write!(f, "StartReissue"),
+            Self::TriggerLeave => write!(f, "TriggerLeave"),
         }
     }
 }
 
-impl From<membership::Msg> for Msg {
+impl From<membership::Msg> for Action {
     fn from(msg: membership::Msg) -> Self {
         Self::Membership(msg)
     }
 }
 
-impl From<ledger::Msg> for Msg {
+impl From<ledger::Msg> for Action {
     fn from(msg: ledger::Msg) -> Self {
         Self::Wallet(msg)
     }
@@ -72,19 +92,21 @@ impl Actor for Node {
         let membership = Membership::new(&self.genesis_nodes);
         let wallet = Wallet::new(&self.genesis_nodes);
 
-        if !self.genesis_nodes.contains(&id) {
-            o.broadcast(&self.genesis_nodes, &membership.req_join(id).into());
-        }
-
-        if !self.genesis_nodes.contains(&id) {
-            o.send(id, Msg::StartReissue);
-        }
-
-        State {
+        let state = State {
             membership,
             wallet,
             is_leaving: false,
+        };
+
+        if !self.genesis_nodes.contains(&id) {
+            o.broadcast(&self.genesis_nodes, &state.membership.req_join(id));
         }
+
+        // if !self.genesis_nodes.contains(&id) {
+        //     o.send(id, state.build_msg(Action::StartReissue));
+        // }
+
+        state
     }
 
     fn on_msg(
@@ -96,20 +118,20 @@ impl Actor for Node {
         o: &mut Out<Self>,
     ) {
         let elders = state.elders();
-        match msg {
-            Msg::Membership(msg) => {
-                state.to_mut().membership.on_msg(&elders, id, src, msg, o);
+        let Msg { stable_set, action } = msg;
 
-                if id > Id::from(self.peers.len() / 2)
-                    && state.membership.is_member(id)
-                    && !state.is_leaving
-                {
-                    state.to_mut().is_leaving = true;
-                    o.send(id, Msg::TriggerLeave);
-                }
+        let mut nodes_to_sync = state.to_mut().membership.merge(stable_set, id, src);
+
+        match action {
+            Action::Sync => (),
+            Action::Membership(msg) => {
+                nodes_to_sync.extend(state.to_mut().membership.on_msg(&elders, id, src, msg, o));
             }
-            Msg::Wallet(msg) => state.to_mut().wallet.on_msg(&elders, id, src, msg, o),
-            Msg::StartReissue => {
+            Action::Wallet(msg) => {
+                let membership = state.membership.clone();
+                state.to_mut().wallet.on_msg(&membership, id, src, msg, o)
+            }
+            Action::StartReissue => {
                 let input = state.wallet.ledger.genesis_dbc.clone();
 
                 let reissue_amount = (0..self.peers.len() + 1)
@@ -117,17 +139,29 @@ impl Actor for Node {
                     .unwrap() as u64;
                 let difference = input.amount() - reissue_amount;
 
+                let membership = state.membership.clone();
                 state.to_mut().wallet.reissue(
-                    &elders,
+                    &membership,
                     vec![input],
                     vec![reissue_amount, difference],
                     o,
                 );
             }
-            Msg::TriggerLeave => {
+            Action::TriggerLeave => {
                 o.broadcast(&elders, &state.to_mut().membership.req_leave(id).into());
             }
         }
+        if id > Id::from((self.peers.len() * 2) / 3)
+            && state.membership.is_member(id)
+            && !state.is_leaving
+        {
+            state.to_mut().is_leaving = true;
+            o.send(id, state.build_msg(Action::TriggerLeave));
+        }
+
+        nodes_to_sync.extend(state.to_mut().membership.process_pending_actions(id));
+
+        o.broadcast(&nodes_to_sync, &state.build_msg(Action::Sync))
     }
 }
 
