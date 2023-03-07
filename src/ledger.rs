@@ -60,12 +60,7 @@ impl Wallet {
         msg: Msg,
         o: &mut Out<crate::Node>,
     ) {
-        // If we have a pending transaction and the elders changed, we need to restart the reissue
         let elders = membership.elders();
-
-        if let Some((tx, sig)) = self.pending_tx.as_ref() {
-            self.reissue(membership, tx.inputs.clone(), tx.outputs.clone(), o);
-        }
 
         match msg {
             Msg::ReqReissue(tx) => {

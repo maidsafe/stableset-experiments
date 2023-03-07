@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 
-use stateright::actor::{Id, Out};
+use stateright::actor::Id;
 
 use crate::stable_set::{Member, StableSet};
-use crate::{Node, ELDER_COUNT};
+use crate::ELDER_COUNT;
 
 pub type Elders = BTreeSet<Id>;
 
@@ -115,14 +115,7 @@ impl Membership {
         additional_members_to_sync
     }
 
-    pub fn on_msg(
-        &mut self,
-        elders: &BTreeSet<Id>,
-        id: Id,
-        src: Id,
-        msg: Msg,
-        o: &mut Out<Node>,
-    ) -> BTreeSet<Id> {
+    pub fn on_msg(&mut self, elders: &BTreeSet<Id>, id: Id, src: Id, msg: Msg) -> BTreeSet<Id> {
         let mut additional_members_to_sync = BTreeSet::new();
         match msg {
             Msg::ReqJoin(candidate_id) => {

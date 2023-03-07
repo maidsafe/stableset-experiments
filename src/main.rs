@@ -125,7 +125,7 @@ impl Actor for Node {
         match action {
             Action::Sync => (),
             Action::Membership(msg) => {
-                nodes_to_sync.extend(state.to_mut().membership.on_msg(&elders, id, src, msg, o));
+                nodes_to_sync.extend(state.to_mut().membership.on_msg(&elders, id, src, msg));
             }
             Action::Wallet(msg) => {
                 let membership = state.membership.clone();
