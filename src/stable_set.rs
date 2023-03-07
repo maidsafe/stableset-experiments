@@ -8,7 +8,7 @@ use stateright::actor::Id;
 use crate::membership::Elders;
 
 pub fn majority(m: usize, n: usize) -> bool {
-    m > n / 2
+    3 * m > n * 2
 }
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
