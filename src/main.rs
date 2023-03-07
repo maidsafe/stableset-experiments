@@ -224,9 +224,9 @@ impl ModelCfg {
                         state
                             .actor_states
                             .iter()
-                            .filter_map(|a| a.wallet.pending_tx.clone())
-                            .filter(|(tx, sig)| sig.verify(&sig.ids(), tx))
-                            .map(|(tx, _)| tx),
+                            .filter_map(|a| a.wallet.pending_tx.clone().map(|tx| (a.clone(), tx)))
+                            .filter(|(a, (tx, sig))| sig.verify(&a.membership.elders(), tx))
+                            .map(|(_, tx)| tx),
                     );
 
                     concurrent_txs.len() <= 1
