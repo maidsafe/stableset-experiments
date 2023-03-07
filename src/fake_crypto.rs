@@ -64,6 +64,10 @@ impl<T: Eq> SigSet<T> {
 
         majority(valid_shares_from_voters, voters.len())
     }
+
+    pub fn ids(&self) -> BTreeSet<Id> {
+        self.shares.iter().map(|(id, _)| id).cloned().collect()
+    }
 }
 
 impl<T: Debug + Clone + Ord> Debug for SigSet<T> {

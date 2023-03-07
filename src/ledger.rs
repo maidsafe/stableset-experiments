@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use stateright::actor::{Id, Out};
 
 use crate::{
-    fake_crypto::{SectionSig, Sig},
+    fake_crypto::{SectionSig, Sig, SigSet},
     membership::Elders,
 };
 
@@ -16,7 +16,7 @@ pub enum Msg {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Wallet {
     pub ledger: Ledger,
-    pub pending_tx: Option<(Tx, SectionSig<Tx>)>,
+    pub pending_tx: Option<(Tx, SigSet<Tx>)>,
 }
 
 impl Wallet {
@@ -35,7 +35,7 @@ impl Wallet {
         o: &mut Out<crate::Node>,
     ) {
         let tx = Tx { inputs, outputs };
-        self.pending_tx = Some((tx.clone(), SectionSig::new(elders.clone())));
+        self.pending_tx = Some((tx.clone(), SigSet::new()));
 
         o.broadcast(elders, &Msg::ReqReissue(tx).into())
     }
@@ -44,9 +44,7 @@ impl Wallet {
         // If we have a pending transaction and the elders changed, we need to restart the reissue
 
         if let Some((tx, sig)) = self.pending_tx.as_ref() {
-            if &sig.voters != elders {
-                self.reissue(elders, tx.inputs.clone(), tx.outputs.clone(), o);
-            }
+            self.reissue(elders, tx.inputs.clone(), tx.outputs.clone(), o);
         }
 
         match msg {
@@ -60,10 +58,9 @@ impl Wallet {
             Msg::ReissueShare(tx, sig_share) => {
                 if elders.contains(&src) {
                     if let Some((pending_tx, sig)) = self.pending_tx.as_mut() {
-                        if pending_tx == &tx
-                            && sig_share.verify(src, &tx)
-                            && sig.add_share(src, sig_share)
-                        {
+                        if pending_tx == &tx && sig_share.verify(src, &tx) {
+                            sig.add_share(src, sig_share)
+
                             // todo: do something with finished transaction
                             // self.pending_tx = None;
                         }

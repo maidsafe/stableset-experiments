@@ -12,7 +12,7 @@ use stateright::{
     Expectation, Model,
 };
 
-const ELDER_COUNT: usize = 3;
+const ELDER_COUNT: usize = 5;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
@@ -225,7 +225,7 @@ impl ModelCfg {
                             .actor_states
                             .iter()
                             .filter_map(|a| a.wallet.pending_tx.clone())
-                            .filter(|(tx, sig)| sig.verify(&sig.voters, tx))
+                            .filter(|(tx, sig)| sig.verify(&sig.ids(), tx))
                             .map(|(tx, _)| tx),
                     );
 
@@ -242,7 +242,7 @@ fn main() {
 
     ModelCfg {
         elder_count: 1,
-        server_count: 4,
+        server_count: 6,
         network,
     }
     .into_model()
