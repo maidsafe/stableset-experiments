@@ -4,7 +4,8 @@ use stateright::actor::{Id, Out};
 
 use crate::{
     build_msg,
-    fake_crypto::{majority, SigSet},
+    stable_set::majority,
+    fake_crypto::SigSet,
     membership::{Elders, Membership},
 };
 

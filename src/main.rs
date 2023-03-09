@@ -9,7 +9,7 @@ use std::{
     fmt::Debug,
 };
 
-use fake_crypto::majority;
+use stable_set::majority;
 use ledger::{genesis_dbc, Tx, Wallet};
 use membership::Membership;
 use stable_set::StableSet;

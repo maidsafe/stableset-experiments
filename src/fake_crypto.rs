@@ -4,10 +4,9 @@ use std::{
 };
 
 use stateright::actor::Id;
+use crate::stable_set::majority;
 
-pub fn majority(m: usize, n: usize) -> bool {
-    3 * m > 2 * n
-}
+
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Sig<T> {
