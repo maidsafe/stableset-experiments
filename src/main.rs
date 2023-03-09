@@ -3,9 +3,14 @@ mod ledger;
 mod membership;
 mod stable_set;
 
-use std::{borrow::Cow, collections::BTreeSet, fmt::Debug};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+};
 
-use ledger::Wallet;
+use fake_crypto::majority;
+use ledger::{genesis_dbc, Tx, Wallet};
 use membership::Membership;
 use stable_set::StableSet;
 use stateright::{
@@ -13,7 +18,16 @@ use stateright::{
     Expectation, Model,
 };
 
-const ELDER_COUNT: usize = 5;
+const ELDER_COUNT: usize = 4;
+
+pub fn build_msg(membership: &Membership, action: impl Into<Action>) -> Msg {
+    let stable_set = membership.stable_set.clone();
+
+    Msg {
+        stable_set,
+        action: action.into(),
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
@@ -28,8 +42,7 @@ impl State {
     }
 
     fn build_msg(&self, action: Action) -> Msg {
-        let stable_set = self.membership.stable_set.clone();
-        Msg { stable_set, action }
+        build_msg(&self.membership, action)
     }
 }
 
@@ -102,8 +115,9 @@ impl Actor for Node {
             o.broadcast(&self.genesis_nodes, &state.membership.req_join(id));
         }
 
-        // if !self.genesis_nodes.contains(&id) {
-        //     o.send(id, state.build_msg(Action::StartReissue));
+        // if id > Id::from(self.peers.len().saturating_sub(2)) {
+        // First two nodes will try to spend the genesis
+        o.send(id, state.build_msg(Action::StartReissue));
         // }
 
         state
@@ -132,11 +146,10 @@ impl Actor for Node {
                 state.to_mut().wallet.on_msg(&membership, id, src, msg, o)
             }
             Action::StartReissue => {
-                let input = state.wallet.ledger.genesis_dbc.clone();
+                let input = genesis_dbc().clone();
 
-                let reissue_amount = (0..self.peers.len() + 1)
-                    .find(|x| Id::from(*x) == id)
-                    .unwrap() as u64;
+                let reissue_amount =
+                    (0..self.peers.len()).find(|x| Id::from(*x) == id).unwrap() as u64;
                 let difference = input.amount() - reissue_amount;
 
                 let membership = state.membership.clone();
@@ -160,6 +173,7 @@ impl Actor for Node {
         }
 
         nodes_to_sync.extend(state.to_mut().membership.process_pending_actions(id));
+        nodes_to_sync.remove(&id);
 
         o.broadcast(&nodes_to_sync, &state.build_msg(Action::Sync))
     }
@@ -219,9 +233,45 @@ fn prop_all_nodes_who_are_leaving_eventually_left(state: &ActorModelState<Node, 
 
 #[allow(unused)]
 fn prop_unspent_outputs_equals_genesis_amount(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-    state.actor_states.iter().all(|actor| {
-        actor.wallet.ledger.genesis_amount() == actor.wallet.ledger.sum_unspent_outputs()
-    })
+    state
+        .actor_states
+        .iter()
+        .all(|actor| genesis_dbc().amount() == actor.wallet.ledger.sum_unspent_outputs())
+}
+
+fn prop_no_double_spends(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    let actor_by_id = BTreeMap::from_iter(
+        state
+            .actor_states
+            .iter()
+            .enumerate()
+            .map(|(id, s)| (Id::from(id), s)),
+    );
+
+    let concurrent_txs = BTreeSet::from_iter(state.actor_states.iter().flat_map(|a| {
+        let mut transactions: BTreeMap<Tx, usize> = Default::default();
+
+        let elders = a.membership.elders();
+
+        for elder in &elders {
+            if let Some(tx) = actor_by_id
+                .get(elder)
+                .unwrap()
+                .wallet
+                .read_tx(&genesis_dbc().id())
+            {
+                let tx_count = transactions.entry(tx).or_default();
+                *tx_count += 1;
+            }
+        }
+
+        transactions
+            .into_iter()
+            .filter(move |(_, count)| majority(*count, elders.len()))
+            .map(|(tx, _)| tx)
+    }));
+
+    concurrent_txs.len() <= 1
 }
 
 impl ModelCfg {
@@ -229,7 +279,7 @@ impl ModelCfg {
         ActorModel::new(self.clone(), vec![])
             .actors((0..self.server_count).map(|i| Node {
                 genesis_nodes: BTreeSet::from_iter((0..self.elder_count).into_iter().map(Id::from)),
-                peers: model_peers(i, self.server_count),
+                peers: (0..self.server_count).map(Id::from).collect(),
             }))
             .init_network(self.network)
             .property(
@@ -253,18 +303,7 @@ impl ModelCfg {
             .property(
                 Expectation::Always,
                 "Never two nodes aggregate a double spend",
-                |_, state| {
-                    let concurrent_txs = BTreeSet::from_iter(
-                        state
-                            .actor_states
-                            .iter()
-                            .filter_map(|a| a.wallet.pending_tx.clone().map(|tx| (a.clone(), tx)))
-                            .filter(|(a, (tx, sig))| sig.verify(&a.membership.elders(), tx))
-                            .map(|(_, tx)| tx),
-                    );
-
-                    concurrent_txs.len() <= 1
-                },
+                |_, state| prop_no_double_spends(state),
             )
     }
 }
@@ -276,7 +315,7 @@ fn main() {
 
     ModelCfg {
         elder_count: 1,
-        server_count: 6,
+        server_count: 5,
         network,
     }
     .into_model()

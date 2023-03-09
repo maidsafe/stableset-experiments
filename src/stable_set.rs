@@ -35,11 +35,17 @@ pub struct StableSet {
 
 impl Debug for StableSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "SS({:?}, joining:{:?}, leaving:{:?})",
-            self.members, self.joining_members, self.leaving_members
-        )
+        write!(f, "SS({:?}", self.members)?;
+
+        if !self.joining_members.is_empty() {
+            write!(f, ", joining:{:?}", self.joining_members)?;
+        }
+
+        if !self.leaving_members.is_empty() {
+            write!(f, ", leaving:{:?}", self.leaving_members)?;
+        }
+
+        write!(f, ")")
     }
 }
 

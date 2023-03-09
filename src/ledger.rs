@@ -1,39 +1,32 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use stateright::actor::{Id, Out};
 
 use crate::{
-    fake_crypto::{SectionSig, Sig, SigSet},
+    build_msg,
+    fake_crypto::{majority, SigSet},
     membership::{Elders, Membership},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Msg {
     ReqReissue(Tx),
-    ReissueShare(Tx, Sig<Tx>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Wallet {
     pub ledger: Ledger,
-    pub pending_tx: Option<(Tx, SigSet<Tx>)>,
 }
 
 impl Wallet {
-    fn build_msg(&self, membership: &Membership, msg: Msg) -> crate::Msg {
-        let stable_set = membership.stable_set.clone();
-
-        crate::Msg {
-            stable_set,
-            action: msg.into(),
-        }
-    }
-
     pub fn new(elders: &Elders) -> Self {
         Self {
             ledger: Ledger::new(elders),
-            pending_tx: None,
         }
+    }
+
+    pub fn read_tx(&self, dbc_id: &DbcId) -> Option<Tx> {
+        self.ledger.commitments.get(dbc_id).cloned()
     }
 
     pub fn reissue(
@@ -44,11 +37,10 @@ impl Wallet {
         o: &mut Out<crate::Node>,
     ) {
         let tx = Tx { inputs, outputs };
-        self.pending_tx = Some((tx.clone(), SigSet::new()));
 
         o.broadcast(
             &membership.elders(),
-            &self.build_msg(membership, Msg::ReqReissue(tx)),
+            &build_msg(membership, Msg::ReqReissue(tx)),
         )
     }
 
@@ -64,28 +56,16 @@ impl Wallet {
 
         match msg {
             Msg::ReqReissue(tx) => {
-                if elders.contains(&id) {
-                    if let Some(sig_share) = self.ledger.tx_share(id, &elders, tx.clone()) {
-                        o.send(
-                            src,
-                            self.build_msg(membership, Msg::ReissueShare(tx, sig_share).into()),
-                        )
-                    }
-                }
-            }
-            Msg::ReissueShare(tx, sig_share) => {
-                if elders.contains(&src) {
-                    if let Some((pending_tx, sig)) = self.pending_tx.as_mut() {
-                        if pending_tx == &tx && sig_share.verify(src, &tx) {
-                            sig.add_share(src, sig_share)
-
-                            // todo: do something with finished transaction
-                            // self.pending_tx = None;
-                        }
-                    }
+                if self.ledger.log_tx_share(id, tx.clone(), src) {
+                    o.broadcast(
+                        elders.iter().filter(|e| e != &&id),
+                        &build_msg(membership, Msg::ReqReissue(tx)),
+                    )
                 }
             }
         }
+
+        self.ledger.process_completed_commitments(membership)
     }
 }
 
@@ -123,11 +103,10 @@ impl Tx {
         )
     }
 
-    pub fn output_dbcs(&self, tx_sig: SectionSig<Tx>) -> Vec<Dbc> {
+    pub fn output_dbcs(&self) -> Vec<Dbc> {
         Vec::from_iter((0..self.outputs.len() as u64).map(|output_index| Dbc {
             output_index,
             tx: self.clone(),
-            tx_sig: tx_sig.clone(),
         }))
     }
 }
@@ -136,7 +115,6 @@ impl Tx {
 pub struct Dbc {
     pub output_index: u64,
     pub tx: Tx,
-    pub tx_sig: SectionSig<Tx>,
 }
 
 impl Dbc {
@@ -151,46 +129,38 @@ impl Dbc {
         self.tx.outputs[self.output_index as usize]
     }
 
-    pub fn verify(&self, elders: &Elders) -> bool {
-        self.output_index < self.tx.outputs.len() as u64
-            && self.tx.verify_sums()
-            && self.tx_sig.verify(elders, &self.tx)
+    pub fn verify(&self) -> bool {
+        self.output_index < self.tx.outputs.len() as u64 && self.tx.verify_sums()
+    }
+}
+
+pub fn genesis_dbc() -> Dbc {
+    Dbc {
+        output_index: 0,
+        tx: Tx {
+            inputs: vec![],
+            outputs: vec![100],
+        },
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ledger {
-    pub genesis_dbc: Dbc,
     pub commitments: BTreeMap<DbcId, Tx>,
+    pub pending_commitments: BTreeMap<Tx, BTreeSet<Id>>,
 }
 
 impl Ledger {
     pub fn new(elders: &Elders) -> Self {
-        let genesis_tx = Tx {
-            inputs: vec![],
-            outputs: vec![100],
-        };
-        let mut tx_sig = SectionSig::new(elders.clone());
-        for elder in elders {
-            tx_sig.add_share(*elder, Sig::sign(*elder, genesis_tx.clone()));
-        }
         Self {
-            genesis_dbc: Dbc {
-                output_index: 0,
-                tx: genesis_tx,
-                tx_sig,
-            },
             commitments: Default::default(),
+            pending_commitments: Default::default(),
         }
-    }
-
-    pub fn genesis_amount(&self) -> u64 {
-        self.genesis_dbc.amount()
     }
 
     pub fn sum_unspent_outputs(&self) -> u64 {
         let mut sum = 0;
-        for (dbc_id, amount) in std::iter::once(&self.genesis_dbc.tx)
+        for (dbc_id, amount) in std::iter::once(&genesis_dbc().tx)
             .chain(self.commitments.values())
             .flat_map(|tx| tx.output_dbc_ids_and_amounts())
         {
@@ -202,35 +172,84 @@ impl Ledger {
         sum
     }
 
-    pub fn tx_share(&mut self, id: Id, elders: &Elders, tx: Tx) -> Option<Sig<Tx>> {
+    pub fn validate_tx(&self, tx: &Tx) -> bool {
         if !tx.verify_sums() {
-            return None;
+            return false;
         }
 
-        for dbc in tx.inputs.iter() {
-            if !dbc.verify(elders) && dbc != &self.genesis_dbc {
-                return None;
+        for input_dbc in tx.inputs.iter() {
+            if !(input_dbc.verify() || input_dbc == &genesis_dbc()) {
+                return false;
             }
 
-            for dbc_parent in dbc.tx.inputs.iter() {
-                let parent_tx = self.commitments.get(&dbc_parent.id())?;
-                if parent_tx != &dbc.tx {
-                    return None;
+            // Check that the DBC's used to create this input were all committed to the dbc's TX
+            for input_dbc_parent in input_dbc.tx.inputs.iter() {
+                let parent_tx = if let Some(tx) = self.commitments.get(&input_dbc_parent.id()) {
+                    tx
+                } else {
+                    return false;
+                };
+                if parent_tx != &input_dbc.tx {
+                    return false;
                 }
             }
 
-            if let Some(existing_tx) = self.commitments.get(&dbc.id()) {
-                if existing_tx != &tx {
-                    return None;
+            // Check that this input DBC isn't already committed to a tx.
+            if self.commitments.contains_key(&input_dbc.id()) {
+                return false;
+            }
+
+            // Check that this input DBC isn't already in a pending commitment
+            for pending_tx in self.pending_commitments.keys() {
+                let input_dbc_in_pending_tx = pending_tx
+                    .inputs
+                    .iter()
+                    .any(|pending_dbc| pending_dbc == input_dbc);
+
+                if input_dbc_in_pending_tx && pending_tx != tx {
+                    return false;
                 }
             }
         }
 
-        // If all input dbc's are valid, then we update our ledger
-        for dbc in tx.inputs.iter().cloned() {
-            self.commitments.insert(dbc.id(), tx.clone());
+        true
+    }
+
+    // Returns true if this is the first time we've seen this tx and it was valid, false otherwise
+    pub fn log_tx_share(&mut self, id: Id, tx: Tx, witness: Id) -> bool {
+        if !self.validate_tx(&tx) {
+            return false;
         }
 
-        Some(Sig::sign(id, tx))
+        let first_time_seeing_tx = !self.pending_commitments.contains_key(&tx);
+
+        // If all input dbc's are valid, then we add the Tx to the pending commitments.
+        let witnesses = self.pending_commitments.entry(tx).or_default();
+        witnesses.insert(witness);
+        witnesses.insert(id);
+
+        first_time_seeing_tx
+    }
+
+    pub fn process_completed_commitments(&mut self, membership: &Membership) {
+        let elders = membership.elders();
+
+        let ready_commitments = Vec::from_iter(
+            self.pending_commitments
+                .iter()
+                .filter(|(_, witnesses)| {
+                    majority(witnesses.intersection(&elders).count(), elders.len())
+                })
+                .map(|(tx, _)| tx)
+                .cloned(),
+        );
+
+        for tx in ready_commitments {
+            for input_dbc in tx.inputs.iter() {
+                self.commitments.insert(input_dbc.id(), tx.clone());
+            }
+
+            self.pending_commitments.remove(&tx);
+        }
     }
 }

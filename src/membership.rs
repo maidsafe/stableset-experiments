@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use stateright::actor::Id;
 
 use crate::stable_set::{Member, StableSet};
-use crate::ELDER_COUNT;
+use crate::{build_msg, ELDER_COUNT};
 
 pub type Elders = BTreeSet<Id>;
 
@@ -44,11 +44,7 @@ impl Membership {
     }
 
     fn build_msg(&self, msg: Msg) -> crate::Msg {
-        let stable_set = self.stable_set.clone();
-        crate::Msg {
-            stable_set,
-            action: msg.into(),
-        }
+        build_msg(&self, msg)
     }
 
     pub fn req_join(&self, id: Id) -> crate::Msg {
@@ -82,6 +78,7 @@ impl Membership {
 
             if self.handle_join_share(id, member, src) {
                 additional_members_to_sync.insert(m_id);
+                additional_members_to_sync.extend(self.elders());
             }
         }
 
@@ -89,6 +86,7 @@ impl Membership {
             let m_id = member.id;
             if self.handle_join_share(id, member, src) {
                 additional_members_to_sync.insert(m_id);
+                additional_members_to_sync.extend(self.elders());
             }
         }
 
@@ -96,6 +94,7 @@ impl Membership {
             let m_id = member.id;
             if self.handle_leave_share(id, member, src) {
                 additional_members_to_sync.insert(m_id);
+                additional_members_to_sync.extend(self.elders());
             }
         }
 
@@ -109,6 +108,7 @@ impl Membership {
             let m_id = member.id;
             if self.handle_leave_share(id, member, src) {
                 additional_members_to_sync.insert(m_id);
+                additional_members_to_sync.extend(self.elders());
             }
         }
 
@@ -136,6 +136,7 @@ impl Membership {
 
                     if self.handle_join_share(id, member, id) {
                         additional_members_to_sync.insert(candidate_id);
+                        additional_members_to_sync.extend(elders);
                     }
                 }
             }
@@ -143,6 +144,7 @@ impl Membership {
                 if let Some(member) = self.stable_set.member_by_id(to_remove) {
                     if self.handle_leave_share(id, member, src) {
                         additional_members_to_sync.insert(to_remove);
+                        additional_members_to_sync.extend(elders);
                     }
                 }
             }
@@ -150,6 +152,7 @@ impl Membership {
                 let m_id = member.id;
                 if self.handle_join_share(id, member, src) {
                     additional_members_to_sync.insert(m_id);
+                    additional_members_to_sync.extend(elders);
                 }
             }
         }
@@ -157,11 +160,9 @@ impl Membership {
     }
 
     pub fn process_pending_actions(&mut self, id: Id) -> BTreeSet<Id> {
-        let elders = self.elders();
+        let stable_set_changed = self.stable_set.process_ready_actions(&self.elders());
 
-        let stable_set_changed = self.stable_set.process_ready_actions(&elders);
-
-        if stable_set_changed && elders.contains(&id) {
+        if stable_set_changed && self.elders().contains(&id) {
             self.stable_set.ids().filter(|e| e != &id).collect()
         } else {
             Default::default()
@@ -169,18 +170,22 @@ impl Membership {
     }
 
     fn handle_join_share(&mut self, id: Id, member: Member, witness: Id) -> bool {
-        let mut first_time_seeing_join = self.stable_set.joining_witnesses(&member).is_empty();
+        if self.stable_set.is_member(&member) {
+            return false;
+        }
 
-        first_time_seeing_join &= self.stable_set.add(member.clone(), witness);
+        let first_time_seeing_join = self.stable_set.add(member.clone(), witness);
         self.stable_set.add(member, id);
 
         first_time_seeing_join
     }
 
     fn handle_leave_share(&mut self, id: Id, member: Member, witness: Id) -> bool {
-        let mut first_time_seeing_leave = self.stable_set.leaving_witnesses(&member).is_empty();
+        if !self.stable_set.is_member(&member) {
+            return false;
+        }
 
-        first_time_seeing_leave &= self.stable_set.remove(member.clone(), witness);
+        let first_time_seeing_leave = self.stable_set.remove(member.clone(), witness);
         self.stable_set.remove(member, id);
 
         first_time_seeing_leave
