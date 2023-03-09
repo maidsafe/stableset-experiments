@@ -21,7 +21,15 @@ use stateright::{
 const ELDER_COUNT: usize = 4;
 
 pub fn build_msg(membership: &Membership, action: impl Into<Action>) -> Msg {
-    let stable_set = membership.stable_set.clone();
+    let mut stable_set = membership.stable_set.clone();
+
+    for (_, witnesses) in stable_set.joining_members.iter_mut() {
+        witnesses.clear()
+    }
+
+    for (_, witnesses) in stable_set.leaving_members.iter_mut() {
+        witnesses.clear()
+    }
 
     Msg {
         stable_set,
@@ -186,42 +194,38 @@ struct ModelCfg {
     network: Network<<Node as Actor>::Msg>,
 }
 
-fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-    let mut non_leaving_nodes = state.actor_states.iter().filter(|s| !s.is_leaving);
-
-    let reference_stable_set = if let Some(s) = non_leaving_nodes
+fn reference_stable_set(state: &ActorModelState<Node, Vec<Msg>>) -> StableSet {
+    state
+        .actor_states
+        .iter()
+        .filter(|s| !s.is_leaving)
         .next()
-        .map(|s| s.membership.stable_set.members())
-    {
-        s
-    } else {
-        return true;
-    };
+        .map(|s| s.membership.stable_set.clone())
+        .unwrap_or_default()
+}
 
-    non_leaving_nodes.all(|actor| actor.membership.stable_set.members() == reference_stable_set)
-    // && reference_stable_set.ids().count() == reference_stable_set.members().len()
+fn prop_stable_set_converged(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    let reference_members = reference_stable_set(state).members();
+
+    state
+        .actor_states
+        .iter()
+        .filter(|s| !s.is_leaving)
+        .all(|actor| actor.membership.stable_set.members() == reference_members)
 }
 
 fn prop_all_nodes_joined_who_havent_left(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
+    let reference_stable_set = reference_stable_set(state);
     state
         .actor_states
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.is_leaving)
-        .all(|(id, actor)| actor.membership.stable_set.contains(id.into()))
+        .all(|(id, actor)| reference_stable_set.contains(id.into()))
 }
 
 fn prop_all_nodes_who_are_leaving_eventually_left(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
-    let reference_stable_set = if let Some(s) = state
-        .actor_states
-        .iter()
-        .find(|s| !s.is_leaving)
-        .map(|s| s.membership.stable_set.clone())
-    {
-        s
-    } else {
-        return true;
-    };
+    let reference_stable_set = reference_stable_set(state);
 
     state
         .actor_states
