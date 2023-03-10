@@ -5,7 +5,7 @@ use std::{
 
 use stateright::actor::Id;
 
-use crate::membership::Elders;
+use crate::{ledger::Ledger, membership::Elders};
 
 pub fn majority(m: usize, n: usize) -> bool {
     3 * m > n * 2
@@ -31,6 +31,7 @@ pub struct StableSet {
     // dead: BTreeSet<Id>,
     pub joining_members: BTreeMap<Member, BTreeSet<Id>>,
     pub leaving_members: BTreeMap<Member, BTreeSet<Id>>,
+    pub ledger: Ledger,
 }
 
 impl Debug for StableSet {

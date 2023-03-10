@@ -3,11 +3,8 @@ use std::{
     fmt::Debug,
 };
 
+use crate::stable_set::majority;
 use stateright::actor::Id;
-
-pub fn majority(m: usize, n: usize) -> bool {
-    3 * m > 2 * n
-}
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Sig<T> {

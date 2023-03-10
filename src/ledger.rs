@@ -2,11 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use stateright::actor::{Id, Out};
 
-use crate::{
-    build_msg,
-    fake_crypto::{majority, SigSet},
-    membership::{Elders, Membership},
-};
+use crate::{build_msg, membership::Membership, stable_set::majority};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Msg {
@@ -19,9 +15,9 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    pub fn new(elders: &Elders) -> Self {
+    pub fn new() -> Self {
         Self {
-            ledger: Ledger::new(elders),
+            ledger: Ledger::new(),
         }
     }
 
@@ -29,7 +25,7 @@ impl Wallet {
         self.ledger.commitments.get(dbc_id).cloned()
     }
 
-    pub fn reissue(
+    pub fn spend(
         &mut self,
         membership: &Membership,
         inputs: Vec<Dbc>,
@@ -69,13 +65,17 @@ impl Wallet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct DbcId {
     inputs: Vec<Dbc>,
     output_index: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Tx {
     pub inputs: Vec<Dbc>,
     pub outputs: Vec<u64>,
@@ -111,7 +111,9 @@ impl Tx {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Dbc {
     pub output_index: u64,
     pub tx: Tx,
@@ -144,14 +146,25 @@ pub fn genesis_dbc() -> Dbc {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct Ledger {
     pub commitments: BTreeMap<DbcId, Tx>,
     pub pending_commitments: BTreeMap<Tx, BTreeSet<Id>>,
 }
 
 impl Ledger {
-    pub fn new(elders: &Elders) -> Self {
+    pub fn new() -> Self {
         Self {
             commitments: Default::default(),
             pending_commitments: Default::default(),
