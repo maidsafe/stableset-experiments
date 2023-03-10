@@ -3,10 +3,8 @@ use std::{
     fmt::Debug,
 };
 
-use stateright::actor::Id;
 use crate::stable_set::majority;
-
-
+use stateright::actor::Id;
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Sig<T> {

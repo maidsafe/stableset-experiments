@@ -9,12 +9,12 @@ use std::{
     fmt::Debug,
 };
 
-use stable_set::majority;
 use ledger::{genesis_dbc, Tx, Wallet};
 use membership::Membership;
+use stable_set::majority;
 use stable_set::StableSet;
 use stateright::{
-    actor::{model_peers, Actor, ActorModel, ActorModelState, Id, Network, Out},
+    actor::{Actor, ActorModel, ActorModelState, Id, Network, Out},
     Expectation, Model,
 };
 
@@ -28,6 +28,10 @@ pub fn build_msg(membership: &Membership, action: impl Into<Action>) -> Msg {
     }
 
     for (_, witnesses) in stable_set.leaving_members.iter_mut() {
+        witnesses.clear()
+    }
+
+    for (_, witnesses) in stable_set.ledger.pending_commitments.iter_mut() {
         witnesses.clear()
     }
 
@@ -77,7 +81,7 @@ pub enum Action {
     Membership(membership::Msg),
     Wallet(ledger::Msg),
     Sync,
-    StartReissue,
+    StartSpend,
     TriggerLeave,
 }
 
@@ -87,7 +91,7 @@ impl Debug for Action {
             Self::Membership(m) => write!(f, "{m:?}"),
             Self::Wallet(m) => write!(f, "{m:?}"),
             Self::Sync => write!(f, "Sync"),
-            Self::StartReissue => write!(f, "StartReissue"),
+            Self::StartSpend => write!(f, "StartReissue"),
             Self::TriggerLeave => write!(f, "TriggerLeave"),
         }
     }
@@ -111,7 +115,7 @@ impl Actor for Node {
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         let membership = Membership::new(&self.genesis_nodes);
-        let wallet = Wallet::new(&self.genesis_nodes);
+        let wallet = Wallet::new();
 
         let state = State {
             membership,
@@ -125,7 +129,7 @@ impl Actor for Node {
 
         // if id > Id::from(self.peers.len().saturating_sub(2)) {
         // First two nodes will try to spend the genesis
-        o.send(id, state.build_msg(Action::StartReissue));
+        o.send(id, state.build_msg(Action::StartSpend));
         // }
 
         state
@@ -153,7 +157,7 @@ impl Actor for Node {
                 let membership = state.membership.clone();
                 state.to_mut().wallet.on_msg(&membership, id, src, msg, o)
             }
-            Action::StartReissue => {
+            Action::StartSpend => {
                 let input = genesis_dbc().clone();
 
                 let reissue_amount =
@@ -161,7 +165,7 @@ impl Actor for Node {
                 let difference = input.amount() - reissue_amount;
 
                 let membership = state.membership.clone();
-                state.to_mut().wallet.reissue(
+                state.to_mut().wallet.spend(
                     &membership,
                     vec![input],
                     vec![reissue_amount, difference],
@@ -221,7 +225,7 @@ fn prop_all_nodes_joined_who_havent_left(state: &ActorModelState<Node, Vec<Msg>>
         .iter()
         .enumerate()
         .filter(|(_, actor)| !actor.is_leaving)
-        .all(|(id, actor)| reference_stable_set.contains(id.into()))
+        .all(|(id, _actor)| reference_stable_set.contains(id.into()))
 }
 
 fn prop_all_nodes_who_are_leaving_eventually_left(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
@@ -281,7 +285,7 @@ fn prop_no_double_spends(state: &ActorModelState<Node, Vec<Msg>>) -> bool {
 impl ModelCfg {
     fn into_model(self) -> ActorModel<Node, Self, Vec<Msg>> {
         ActorModel::new(self.clone(), vec![])
-            .actors((0..self.server_count).map(|i| Node {
+            .actors((0..self.server_count).map(|_i| Node {
                 genesis_nodes: BTreeSet::from_iter((0..self.elder_count).into_iter().map(Id::from)),
                 peers: (0..self.server_count).map(Id::from).collect(),
             }))
@@ -318,7 +322,7 @@ fn main() {
     let network = Network::new_unordered_nonduplicating([]);
 
     ModelCfg {
-        elder_count: 1,
+        elder_count: 7,
         server_count: 5,
         network,
     }
