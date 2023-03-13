@@ -5,11 +5,8 @@ use std::{
 
 use stateright::actor::Id;
 
+use crate::fake_crypto::majority;
 use crate::membership::Elders;
-
-pub fn majority(m: usize, n: usize) -> bool {
-    3 * m > n * 2
-}
 
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Member {
