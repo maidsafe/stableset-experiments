@@ -15,7 +15,8 @@ use membership::Membership;
 use stable_set::StableSet;
 use stateright::{
     actor::{model_peers, Actor, ActorModel, ActorModelState, Id, Network, Out},
-    Expectation, Model,
+    report::WriteReporter,
+    Checker, Expectation, Model,
 };
 
 const ELDER_COUNT: usize = 4;
@@ -108,6 +109,7 @@ impl From<ledger::Msg> for Action {
 impl Actor for Node {
     type Msg = Msg;
     type State = State;
+    type Timer = ();
 
     fn on_start(&self, id: Id, o: &mut Out<Self>) -> Self::State {
         let membership = Membership::new(&self.genesis_nodes);
@@ -176,8 +178,8 @@ impl Actor for Node {
             && state.membership.is_member(id)
             && !state.is_leaving
         {
-            state.to_mut().is_leaving = true;
-            o.send(id, state.build_msg(Action::TriggerLeave));
+            // state.to_mut().is_leaving = true;
+            // o.send(id, state.build_msg(Action::TriggerLeave));
         }
 
         nodes_to_sync.extend(state.to_mut().membership.process_pending_actions(id));
@@ -326,4 +328,6 @@ fn main() {
     .checker()
     .threads(num_cpus::get())
     .serve("localhost:3000");
+    // .spawn_bfs()
+    // .report(&mut WriteReporter::new(&mut std::io::stdout()));
 }
